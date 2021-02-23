@@ -4,6 +4,8 @@ import os
 from sklearn.model_selection import KFold
 from random import choice
 from tqdm.auto import tqdm
+import warnings
+warnings.simplefilter("ignore")
 
 from ..data.utils import get_public_df_ohe, get_train_df_ohe
 
@@ -56,6 +58,8 @@ id_2_mask_indices.update(id_2_mask_indices_public)
 # Splitting masks into folds
 fold_2_imgId_2_maskIndices = [dict() for _ in range(N_FOLDS)]
 for img_id, mask_indices in tqdm(id_2_mask_indices.items(), desc='Splitting into folds..'):
+    if len(mask_indices) == 0:
+        continue
     if len(mask_indices) == 1:
         fold_i = choice([4]*10 + [3]*7 + [2]*5 + [1, 0])
         fold_2_imgId_2_maskIndices[fold_i][img_id] = mask_indices
