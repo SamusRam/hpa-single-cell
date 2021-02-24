@@ -40,18 +40,19 @@ with open('../input/all_negs_public.pkl', 'rb') as f:
     all_negs_public = set(pickle.load(f))
 
 
-def get_id_2_masks(precomputed_mask_path):
+def get_id_2_masks(precomputed_mask_path, all_negs):
     available_files = os.listdir(precomputed_mask_path)
     id_2_mask_indices = dict()
     for file_name in tqdm(available_files, desc=f'Generating id_2_masks mapping for {precomputed_mask_path}'):
         img_id = os.path.splitext(file_name)[0]
         masks_all = np.load(os.path.join(precomputed_mask_path, file_name))['arr_0']
-        id_2_mask_indices[img_id] = list(range(1, masks_all.max() + 1))
+        id_2_mask_indices[img_id] = [mask_i for mask_i in range(1, masks_all.max() + 1)
+                                     if f'{img_id}__{mask_i}' not in all_negs]
     return id_2_mask_indices
 
 
-id_2_mask_indices = get_id_2_masks('../input/hpa_cell_mask')
-id_2_mask_indices_public = get_id_2_masks('../input/hpa_cell_mask_public')
+id_2_mask_indices = get_id_2_masks('../input/hpa_cell_mask', all_negs_trn)
+id_2_mask_indices_public = get_id_2_masks('../input/hpa_cell_mask_public', all_negs_public)
 id_2_mask_indices.update(id_2_mask_indices_public)
 
 
@@ -65,7 +66,7 @@ for img_id, mask_indices in tqdm(id_2_mask_indices.items(), desc='Splitting into
         fold_2_imgId_2_maskIndices[fold_i][img_id] = mask_indices
         continue
     kf = KFold(n_splits=min(N_FOLDS, len(mask_indices)), shuffle=True, random_state=41)
-    fold_i = 0
+    fold_i = 0 if len(mask_indices) >= N_FOLDS else np.random.randint(N_FOLDS - len(mask_indices) + 1)
     for _, fold_indices in kf.split(range(len(mask_indices))):
         mask_idx_fold = [mask_indices[i] for i in fold_indices]
         if img_id in fold_2_imgId_2_maskIndices[fold_i]:

@@ -1,7 +1,10 @@
 import cv2
 from keras.utils import Sequence
+from torch.utils.data.dataset import Dataset
 from numpy.random import seed
+import random
 from random import sample
+import os
 seed(10)
 import numpy as np
 
@@ -106,3 +109,42 @@ class DataGeneneratorRGB(Sequence):
         else:
             labels = self.labels
         return np.array(labels)
+
+
+class ProteinMLDatasetModified(Dataset):
+    def __init__(self,
+                 id_list,
+                 img_size=1024,
+                 in_channels=4,
+                 folder='.'
+                 ):
+        self.img_size = img_size
+        self.in_channels = in_channels
+        self.id_list = id_list
+        self.folder = folder
+
+        self.num = len(self.id_list)
+
+
+    def read_rgby(self, image_id):
+        if self.in_channels == 3:
+            colors = ['red', 'green', 'blue']
+        else:
+            colors = ['red', 'green', 'blue', 'yellow']
+
+        flags = cv2.IMREAD_GRAYSCALE
+        img = [cv2.resize(cv2.imread(os.path.join(self.folder, f'{image_id}_{color}.png'), flags), (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+               for color in colors]
+        img = np.stack(img, axis=-1)
+        img = img / 255.0
+        return img
+
+    def __getitem__(self, index):
+        image_id = self.id_list[index]
+
+        image = self.read_rgby(image_id)
+
+        return image
+
+    def __len__(self):
+        return self.num

@@ -76,7 +76,8 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.csv', class_name
         return True
 
     public_hpa_df_17 = public_hpa_df_17[public_hpa_df_17['img_base_path'].map(lambda x: are_all_imgs_present(x))]
-
+    public_hpa_df_17.columns = [x if x != 'Image' else 'ID' for x in public_hpa_df_17.columns]
+    public_hpa_df_17['ID'] = public_hpa_df_17['ID'].map(lambda x: x.split('/')[-1])
     return public_hpa_df_17
 
 
