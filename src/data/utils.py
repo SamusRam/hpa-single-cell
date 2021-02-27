@@ -51,7 +51,7 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.csv', class_name
     public_hpa_df = pd.read_csv(public_info_df_path)
     celllines = ['A-431', 'A549', 'EFO-21', 'HAP1', 'HEK 293', 'HUVEC TERT2', 'HaCaT', 'HeLa', 'PC-3', 'RH-30',
                  'RPTEC TERT1', 'SH-SY5Y', 'SK-MEL-30', 'SiHa', 'U-2 OS', 'U-251 MG', 'hTCEpi']
-    public_hpa_df_17 = public_hpa_df[public_hpa_df.Cellline.isin(celllines)]
+    public_hpa_df_17 = public_hpa_df[public_hpa_df.Cellline.isin(celllines)].copy()
 
     public_hpa_df_17['img_base_path'] = public_hpa_df_17['Image'].map(lambda x: os.path.join(imgs_root_path,
                                                                                              os.path.basename(x)))

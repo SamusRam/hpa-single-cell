@@ -11,12 +11,20 @@ import pickle
 from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_masks_precomputed
 from ..data.datasets import DataGeneneratorRGB
 
+import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--detection-threshold", type=int, default=75)
+parser.add_argument("--public-data", action='store_true')
+
+args = parser.parse_args()
+
+PUBLIC_DATA_FLAG = args.public_data
+DETECTION_THRESHOLD = args.detection_threshold
 IMG_HEIGHT = IMG_WIDTH = 512
 BATCH_SIZE = 8
-DETECTION_THRESHOLD = 150
 
-PUBLIC_DATA_FLAG = True
+
 PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
 OUTPUT_PATH = '../input/all_negs_public.pkl' if PUBLIC_DATA_FLAG else '../input/all_negs.pkl'
 
@@ -44,7 +52,7 @@ if DETECTION_THRESHOLD is None:
         if i not in indices:
             masks = get_masks_precomputed([os.path.basename(img_path)], PATH_TO_MASKS_ROOT)
             green_vals.extend(compute_mask_green_vals(img_path, masks=masks))
-    DETECTION_THRESHOLD = np.quantile(green_vals, 0.7)
+    DETECTION_THRESHOLD = np.quantile(green_vals, 0.6)
 
 
 def get_neg_cells(img_paths, img_height=2048, img_width=2048,
