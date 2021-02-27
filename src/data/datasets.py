@@ -1,5 +1,6 @@
 import cv2
 from keras.utils import Sequence
+import torch
 from torch.utils.data.dataset import Dataset
 from numpy.random import seed
 import random
@@ -77,10 +78,10 @@ class DataGeneneratorRGB(Sequence):
 
     # open_rgby adapted from https://www.kaggle.com/iafoss/pretrained-resnet34-with-rgby-0-460-public-lb
     def open_rgby(self, image_path):  # a function that reads RGBY image
-
-        img = [cv2.imread(f'{image_path}_{color}.png', cv2.IMREAD_GRAYSCALE)
+        img = [cv2.resize(cv2.imread(f'{image_path}_{color}.png', cv2.IMREAD_GRAYSCALE),
+                          (self.resized_height, self.resized_width))
                for color in self.colors]
-        img_resized = cv2.resize(np.stack(img, axis=-1), (self.resized_height, self.resized_width))
+        img_resized = np.stack(img, axis=-1)
         return img_resized
 
     def __getitem__(self, idx):
@@ -125,7 +126,6 @@ class ProteinMLDatasetModified(Dataset):
 
         self.num = len(self.id_list)
 
-
     def read_rgby(self, image_id):
         if self.in_channels == 3:
             colors = ['red', 'green', 'blue']
@@ -145,6 +145,66 @@ class ProteinMLDatasetModified(Dataset):
         image = self.read_rgby(image_id)
 
         return image
+
+    def __len__(self):
+        return self.num
+    
+    
+class ProteinDatasetImageLevel(Dataset):
+    def __init__(self,
+                 img_paths,
+                 basepath_2_ohe=None,
+                 img_size=1024,
+                 transform=None,
+                 return_label=True,
+                 is_trainset=True,
+                 in_channels=4,
+                 crop_size=0,
+                 random_crop=False,
+                 ):
+        self.is_trainset = is_trainset
+        self.img_size = img_size
+        self.return_label = return_label
+        self.in_channels = in_channels
+        self.transform = transform
+        self.crop_size = crop_size
+        self.random_crop = random_crop
+
+        self.img_paths = img_paths
+        if is_trainset:
+            self.basepath_2_ohe = basepath_2_ohe
+
+        self.num = len(self.img_paths)
+
+    def read_rgby(self, img_path):
+        if self.in_channels == 3:
+            colors = ['red', 'green', 'blue']
+        else:
+            colors = ['red', 'green', 'blue', 'yellow']
+
+        flags = cv2.IMREAD_GRAYSCALE
+        img = [cv2.resize(cv2.imread(f'{img_path}_{color}.png', flags), (self.img_size, self.img_size))
+               for color in colors]
+        img = np.stack(img, axis=-1)
+        return img
+
+    def __getitem__(self, index):
+        img_path = self.img_paths[index]
+        image = self.read_rgby(img_path)
+
+        if self.transform is not None:
+            image = self.transform(image)
+        image = image / 255.0
+        image = image.astype(np.float32)
+        if len(image.shape) == 3:
+            image = image.transpose((2, 0, 1))
+        image = torch.from_numpy(image)
+
+        if self.return_label:
+            label = self.basepath_2_ohe[img_path]
+            return image, label, index
+        else:
+            return image, index
 
     def __len__(self):
         return self.num

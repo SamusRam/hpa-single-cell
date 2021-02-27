@@ -2,11 +2,10 @@ import os
 
 import numpy as np
 import pandas as pd
+import cv2
 
 
-def get_class_names():
-    # from https://www.kaggle.com/c/hpa-single-cell-image-classification/data
-    specified_class_names = """0. Nucleoplasm
+SPECIFIED_CLASS_NAMES = """0. Nucleoplasm
     1. Nuclear membrane
     2. Nucleoli
     3. Nucleoli fibrillar center
@@ -26,13 +25,15 @@ def get_class_names():
     17. Vesicles and punctate cytosolic patterns
     18. Negative"""
 
-    class_names = [class_name.split('. ')[1] for class_name in specified_class_names.split('\n')]
+
+def get_class_names():
+    class_names = [class_name.split('. ')[1] for class_name in SPECIFIED_CLASS_NAMES.split('\n')]
     return class_names
 
 
 def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None):
     train_df = pd.read_csv(os.path.join(root_folder_path, 'train.csv'))
-    train_df['img_base_path'] = train_df['ID'].map(lambda x: os.path.join(root_folder_path, x))
+    train_df['img_base_path'] = train_df['ID'].map(lambda x: os.path.join(root_folder_path, 'train', x))
     # One-hot encoding classes
     train_df['Label'] = train_df['Label'].map(lambda x: map(int, x.split('|'))).map(set)
     if class_names is None:
@@ -84,3 +85,54 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.csv', class_name
 def get_masks_precomputed(img_paths, masks_root):
     cell_masks = [np.load(f'{masks_root}/{os.path.basename(image_path)}.npz')['arr_0'] for image_path in img_paths]
     return cell_masks
+
+
+def open_rgb(image_id,
+              folder_root='../input/hpa-single-cell-image-classification/train'):  # a function that reads RGB image
+    colors = ['red', 'green', 'blue']
+    img = [cv2.imread(f'{folder_root}/{image_id}_{color}.png', cv2.IMREAD_GRAYSCALE)
+           for color in colors]
+    img = np.stack(img, axis=-1)
+    return img
+
+
+def get_new_class_name_indices_in_prev_comp_data():
+    class_names = [class_name.split('. ')[1].strip() for class_name in SPECIFIED_CLASS_NAMES.split('\n')]
+
+    old_comp_specified_class_names = """0.  Nucleoplasm  
+    1.  Nuclear membrane   
+    2.  Nucleoli   
+    3.  Nucleoli fibrillar center   
+    4.  Nuclear speckles   
+    5.  Nuclear bodies   
+    6.  Endoplasmic reticulum   
+    7.  Golgi apparatus   
+    8.  Peroxisomes   
+    9.  Endosomes   
+    10.  Lysosomes   
+    11.  Intermediate filaments   
+    12.  Actin filaments   
+    13.  Focal adhesion sites   
+    14.  Microtubules   
+    15.  Microtubule ends   
+    16.  Cytokinetic bridge   
+    17.  Mitotic spindle   
+    18.  Microtubule organizing center   
+    19.  Centrosome   
+    20.  Lipid droplets   
+    21.  Plasma membrane   
+    22.  Cell junctions   
+    23.  Mitochondria   
+    24.  Aggresome   
+    25.  Cytosol   
+    26.  Cytoplasmic bodies   
+    27.  Rods & rings  """
+
+    old_comp_class_names = [class_name.split('. ')[1].strip() for class_name in
+                            old_comp_specified_class_names.split('\n')]
+
+    new_name_index_2_old_name_index = dict()
+    for new_class_index, class_name_new in enumerate(class_names):
+        if class_name_new in old_comp_class_names:
+            new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
+    return list(new_name_index_2_old_name_index.keys())
