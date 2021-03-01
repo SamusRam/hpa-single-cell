@@ -40,46 +40,47 @@ def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classifica
         class_names = get_class_names()
     for class_i, class_name in enumerate(class_names):
         train_df[class_name] = train_df['Label'].map(lambda x: 1 if class_i in x else 0)
-    return train_df
+    return train_df[['ID', 'img_base_path'] + class_names]
 
 
-def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.csv', class_names=None,
+def are_all_imgs_present(base_path):
+    for color in ['red', 'green', 'blue', 'yellow']:
+        if not os.path.exists(f'{base_path}_{color}.png'):
+            return False
+    return True
+
+
+def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_names=None,
                       imgs_root_path='../input/publichpa_1024'):
     if class_names is None:
         class_names = get_class_names()
 
     public_hpa_df = pd.read_csv(public_info_df_path)
+    # Remove all images overlapping with Training set
+    public_hpa_df = public_hpa_df[~public_hpa_df.in_trainset]
+
+    # Remove all images with only labels that are not in this competition
+    public_hpa_df = public_hpa_df[~public_hpa_df.Label_idx.isna()]
+
     celllines = ['A-431', 'A549', 'EFO-21', 'HAP1', 'HEK 293', 'HUVEC TERT2', 'HaCaT', 'HeLa', 'PC-3', 'RH-30',
                  'RPTEC TERT1', 'SH-SY5Y', 'SK-MEL-30', 'SiHa', 'U-2 OS', 'U-251 MG', 'hTCEpi']
     public_hpa_df_17 = public_hpa_df[public_hpa_df.Cellline.isin(celllines)].copy()
-
     public_hpa_df_17['img_base_path'] = public_hpa_df_17['Image'].map(lambda x: os.path.join(imgs_root_path,
                                                                                              os.path.basename(x)))
-    public_hpa_df_17['Label'] = public_hpa_df_17['Label'].map(lambda x: x.split(',')).map(set)
+
+    public_hpa_df_17['Label_idx'] = public_hpa_df_17['Label_idx'].map(lambda x: map(int, x.split('|'))).map(set)
+
     for class_i, class_name in enumerate(class_names):
-        public_hpa_df_17[class_name] = public_hpa_df_17['Label'].map(lambda x: 1 if class_name.strip() in x else 0).map(
-            int)
-        if 'Vesicles' in class_name:
-            public_hpa_df_17[class_name] = public_hpa_df_17['Label'].map(lambda x: 1 if 'Vesicles' in x else 0).map(int)
-        if 'Negative' in class_name:
-            public_hpa_df_17[class_name] = public_hpa_df_17['Label'].map(lambda x: 1 if 'No staining' in x else 0).map(
-                int)
-
-    public_hpa_df_17 = public_hpa_df_17[((public_hpa_df_17['Nucleoplasm'] == 0) &
-                                         (public_hpa_df_17['Cytosol'] == 0)) |
-                                        (public_hpa_df_17['Aggresome'] == 1) |
-                                        (public_hpa_df_17['Mitotic spindle'] == 1)]
-
-    def are_all_imgs_present(base_path):
-        for color in ['red', 'green', 'blue', 'yellow']:
-            if not os.path.exists(f'{base_path}_{color}.png'):
-                return False
-        return True
+        public_hpa_df_17[class_name] = public_hpa_df_17['Label_idx'].map(lambda x: 1 if class_i in x else 0)
 
     public_hpa_df_17 = public_hpa_df_17[public_hpa_df_17['img_base_path'].map(lambda x: are_all_imgs_present(x))]
+
     public_hpa_df_17.columns = [x if x != 'Image' else 'ID' for x in public_hpa_df_17.columns]
     public_hpa_df_17['ID'] = public_hpa_df_17['ID'].map(lambda x: x.split('/')[-1])
-    return public_hpa_df_17
+
+    forbidden_ids = {'1835_D1_3'}
+    public_hpa_df_17 = public_hpa_df_17[~public_hpa_df_17['ID'].isin(forbidden_ids)]
+    return public_hpa_df_17[['ID', 'img_base_path'] + class_names]
 
 
 def get_masks_precomputed(img_paths, masks_root):
@@ -97,7 +98,6 @@ def open_rgb(image_id,
 
 
 def get_new_class_name_indices_in_prev_comp_data():
-    class_names = [class_name.split('. ')[1].strip() for class_name in SPECIFIED_CLASS_NAMES.split('\n')]
 
     old_comp_specified_class_names = """0.  Nucleoplasm  
     1.  Nuclear membrane   
@@ -128,11 +128,42 @@ def get_new_class_name_indices_in_prev_comp_data():
     26.  Cytoplasmic bodies   
     27.  Rods & rings  """
 
-    old_comp_class_names = [class_name.split('. ')[1].strip() for class_name in
-                            old_comp_specified_class_names.split('\n')]
+    class_name_2_new_idx = {"Nucleoplasm": 0,
+    "Nuclear membrane": 1,
+    "Nucleoli": 2,
+    "Nucleoli fibrillar center": 3,
+    "Nuclear speckles": 4,
+    "Nuclear bodies": 5,
+    "Endoplasmic reticulum": 6,
+    "Golgi apparatus": 7,
+    "Intermediate filaments": 8,
+    "Actin filaments": 9,
+    "Focal adhesion sites": 9,
+    "Microtubules": 10,
+    "Mitotic spindle": 11,
+    "Centrosome": 12,
+    "Centriolar satellite": 12,
+    "Plasma membrane": 13,
+    "Cell Junctions": 13,
+    "Mitochondria": 14,
+    "Aggresome": 15,
+    "Cytosol": 16,
+    "Vesicles": 17,
+    "Peroxisomes": 17,
+    "Endosomes": 17,
+    "Lysosomes": 17,
+    "Lipid droplets": 17,
+    "Cytoplasmic bodies": 17,
+    "No staining": 18}
+
+    old_2_new_indices = {class_i_old: class_name_2_new_idx[name]
+                         for class_i_old, name in enumerate(old_comp_specified_class_names)
+                         if name in class_name_2_new_idx}
 
     new_name_index_2_old_name_index = dict()
-    for new_class_index, class_name_new in enumerate(class_names):
-        if class_name_new in old_comp_class_names:
-            new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
-    return list(new_name_index_2_old_name_index.keys())
+    for old_name_index, new_class_index in old_2_new_indices.items():
+        if new_class_index in new_name_index_2_old_name_index:
+            new_name_index_2_old_name_index[new_class_index].append(old_name_index)
+        else:
+            new_name_index_2_old_name_index[new_class_index] = [old_name_index]
+    return new_name_index_2_old_name_index

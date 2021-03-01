@@ -13,12 +13,12 @@ N_FOLDS = 5
 
 train_df = get_train_df_ohe()
 img_paths_train = list(train_df['img_base_path'].values)
-basepath_2_ohe_vector = {img:vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 3:-1].values)}
+basepath_2_ohe_vector = {img:vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
 
 public_hpa_df_17 = get_public_df_ohe()
 public_basepath_2_ohe_vector = {img_path:vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
-                                                            public_hpa_df_17.iloc[:, 4:-1].values)}
+                                                            public_hpa_df_17.iloc[:, 2:].values)}
 
 
 basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)

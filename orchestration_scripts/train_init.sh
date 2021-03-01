@@ -1,8 +1,4 @@
 #!/bin/bash
 
-for fold_i in {0..1}; do
-  echo "submitting to gpu $fold_i, fold $fold_i"
-  nohup python -m src.train.train_bestfitting --fold $fold_i --gpu-id $fold_i &
-done
-python -m orchestration_scripts.active_waiting_for_empty_gpu
-python -m src.train.train_bestfitting --fold 2 --gpu-id 1
+nohup python -m src.train.train_bestfitting --fold 0  &
+nohup python -m src.train.train_bestfitting --fold 0 --scheduler-lr-fraction 0.5 --resume ../output/models/densenet121_512_all_data_obvious_neg/fold0/final.pth &

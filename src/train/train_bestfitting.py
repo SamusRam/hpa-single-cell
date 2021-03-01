@@ -28,7 +28,7 @@ import time
 loss_names = ['FocalSymmetricLovaszHardLogLoss']
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
-parser.add_argument('--out_dir', default='class_densenet121_large_dropout', type=str, help='destination where trained network should be saved')
+parser.add_argument('--out_dir', default='densenet121_512_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
 parser.add_argument('--gpu-id', default='0', type=str, help='gpu id used for training (default: 0)')
 parser.add_argument('--arch', default='class_densenet121_large_dropout', type=str,
                     help='model architecture (default: class_densenet121_large_dropout)')
@@ -36,10 +36,11 @@ parser.add_argument('--num_classes', default=19, type=int, help='number of class
 parser.add_argument('--in_channels', default=4, type=int, help='in channels (default: 4)')
 parser.add_argument('--loss', default='FocalSymmetricLovaszHardLogLoss', choices=loss_names, type=str,
                     help='loss function: ' + ' | '.join(loss_names) + ' (deafault: FocalSymmetricLovaszHardLogLoss)')
-parser.add_argument('--scheduler', default='Adam45', type=str, help='scheduler name')
-parser.add_argument('--epochs', default=55, type=int, help='number of total epochs to run (default: 55)')
-parser.add_argument('--img_size', default=1024, type=int, help='image size (default: 768)')
-parser.add_argument('--batch_size', default=8, type=int, help='train mini-batch size (default: 32)')
+parser.add_argument('--scheduler', default='Adam20', type=str, help='scheduler name')
+parser.add_argument('--scheduler-lr-fraction', default=1.0, type=float, help='scheduler lr multiplier')
+parser.add_argument('--epochs', default=20, type=int, help='number of total epochs to run (default: 55)')
+parser.add_argument('--img_size', default=512, type=int, help='image size (default: 512)')
+parser.add_argument('--batch_size', default=32, type=int, help='train mini-batch size (default: 32)')
 parser.add_argument('--workers', default=multiprocessing.cpu_count() - 1, type=int, help='number of data loading workers (default: 3)')
 parser.add_argument('--fold', default=0, type=int, help='index of fold (default: 0)')
 parser.add_argument('--clipnorm', default=1, type=int, help='clip grad norm')
@@ -63,6 +64,7 @@ def main():
     # set cuda visible device
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
     cudnn.benchmark = True
+    # cudnn.enabled = False
 
     # set random seeds
     torch.manual_seed(0)
@@ -76,7 +78,7 @@ def main():
     model = init_network(model_params)
 
     # move network to gpu
-    model = DataParallel(model)
+    # model = DataParallel(model)
     model.cuda()
 
     # define loss function (criterion)
@@ -92,7 +94,7 @@ def main():
 
     # define scheduler
     try:
-        scheduler = eval(args.scheduler)()
+        scheduler = eval(args.scheduler)(scheduler_lr_fraction=args.scheduler_lr_fraction)
     except:
         raise (RuntimeError("Scheduler {} not available!".format(args.scheduler)))
     optimizer = scheduler.schedule(model, start_epoch, args.epochs)[0]
@@ -121,17 +123,17 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds.pkl', 'rb') as f:
+    with open('../input/imagelevel_folds_obvious_staining.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]
 
     train_df = get_train_df_ohe()
-    basepath_2_ohe_vector = {img: vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 3:].values)}
+    basepath_2_ohe_vector = {img: vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
     public_hpa_df_17 = get_public_df_ohe()
     public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
-                                                                           public_hpa_df_17.iloc[:, 4:].values)}
+                                                                           public_hpa_df_17.iloc[:, 2:].values)}
     basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
 
     train_dataset = ProteinDatasetImageLevel(
@@ -238,7 +240,7 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5)
         losses.update(loss.item())
         loss.backward()
 
-        torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
+        # torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
         optimizer.step()
 
         # measure elapsed time
