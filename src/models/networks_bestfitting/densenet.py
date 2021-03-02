@@ -70,25 +70,11 @@ class DensenetClass(nn.Module):
 
         if pretrained_file is not None:
             final_pretrained = torch.load(pretrained_file)
-            new_name_index_2_old_name_index = get_new_class_name_indices_in_prev_comp_data()
-            stem_indices = 16 * np.ones(19)
-            additional_indices = dict()
-            for class_i, old_class_indices in new_name_index_2_old_name_index.items():
-                stem_indices[class_i] = old_class_indices[0]
-                if len(old_class_indices) > 1:
-                    additional_indices[class_i] = old_class_indices[1:]
+            prev_class_name_indices = get_new_class_name_indices_in_prev_comp_data()
+            prev_class_name_indices += [27, 27]
             state_dict = final_pretrained['state_dict']
-            logit_weight_init = deepcopy(state_dict['logit.weight'])
-            logit_bias_init = deepcopy(state_dict['logit.bias'])
-            state_dict['logit.weight'] = logit_weight_init[stem_indices, :]
-            state_dict['logit.bias'] = logit_bias_init[stem_indices]
-            for class_i, class_additional_indices in additional_indices.items():
-                n_raw_classes = 1 + len(class_additional_indices)
-                state_dict['logit.weight'][class_i, :] /= n_raw_classes
-                state_dict['logit.bias'][class_i] /= n_raw_classes
-                for additional_i in class_additional_indices:
-                    state_dict['logit.weight'][class_i, :] += logit_weight_init[additional_i, :] / n_raw_classes
-                    state_dict['logit.bias'][class_i] += logit_bias_init[additional_i] / n_raw_classes
+            state_dict['logit.weight'] = state_dict['logit.weight'][prev_class_name_indices, :]
+            state_dict['logit.bias'] = state_dict['logit.bias'][prev_class_name_indices]
             self.load_state_dict(state_dict)
 
     def forward(self, x):

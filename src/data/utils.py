@@ -98,6 +98,7 @@ def open_rgb(image_id,
 
 
 def get_new_class_name_indices_in_prev_comp_data():
+    class_names = [class_name.split('. ')[1].strip() for class_name in SPECIFIED_CLASS_NAMES.split('\n')]
 
     old_comp_specified_class_names = """0.  Nucleoplasm  
     1.  Nuclear membrane   
@@ -156,14 +157,11 @@ def get_new_class_name_indices_in_prev_comp_data():
     "Cytoplasmic bodies": 17,
     "No staining": 18}
 
-    old_2_new_indices = {class_i_old: class_name_2_new_idx[name]
-                         for class_i_old, name in enumerate(old_comp_specified_class_names)
-                         if name in class_name_2_new_idx}
+    old_comp_class_names = [class_name.split('. ')[1].strip() for class_name in
+                            old_comp_specified_class_names.split('\n')]
 
     new_name_index_2_old_name_index = dict()
-    for old_name_index, new_class_index in old_2_new_indices.items():
-        if new_class_index in new_name_index_2_old_name_index:
-            new_name_index_2_old_name_index[new_class_index].append(old_name_index)
-        else:
-            new_name_index_2_old_name_index[new_class_index] = [old_name_index]
-    return new_name_index_2_old_name_index
+    for new_class_index, class_name_new in enumerate(class_names):
+        if class_name_new in old_comp_class_names:
+            new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
+    return list(new_name_index_2_old_name_index.keys())

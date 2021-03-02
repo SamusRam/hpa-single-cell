@@ -28,7 +28,7 @@ import time
 loss_names = ['FocalSymmetricLovaszHardLogLoss']
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
-parser.add_argument('--out_dir', default='densenet121_512_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
+parser.add_argument('--out_dir', default='densenet121_1024_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
 parser.add_argument('--gpu-id', default='0', type=str, help='gpu id used for training (default: 0)')
 parser.add_argument('--arch', default='class_densenet121_large_dropout', type=str,
                     help='model architecture (default: class_densenet121_large_dropout)')
@@ -38,14 +38,15 @@ parser.add_argument('--loss', default='FocalSymmetricLovaszHardLogLoss', choices
                     help='loss function: ' + ' | '.join(loss_names) + ' (deafault: FocalSymmetricLovaszHardLogLoss)')
 parser.add_argument('--scheduler', default='Adam20', type=str, help='scheduler name')
 parser.add_argument('--scheduler-lr-fraction', default=1.0, type=float, help='scheduler lr multiplier')
+parser.add_argument('--scheduler-epoch-offset', default=0, type=int, help='epoch offset for the scheduler')
 parser.add_argument('--epochs', default=20, type=int, help='number of total epochs to run (default: 55)')
-parser.add_argument('--img_size', default=512, type=int, help='image size (default: 512)')
-parser.add_argument('--batch_size', default=32, type=int, help='train mini-batch size (default: 32)')
+parser.add_argument('--img_size', default=1024, type=int, help='image size (default: 512)')
+parser.add_argument('--batch_size', default=8, type=int, help='train mini-batch size (default: 32)')
 parser.add_argument('--workers', default=multiprocessing.cpu_count() - 1, type=int, help='number of data loading workers (default: 3)')
 parser.add_argument('--fold', default=0, type=int, help='index of fold (default: 0)')
 parser.add_argument('--clipnorm', default=1, type=int, help='clip grad norm')
 parser.add_argument('--resume', default=None, type=str, help='name of the latest checkpoint (default: None)')
-
+parser.add_argument('--load-state-dict-path', default=None, type=str, help='path to .h5 file with a state-dict to load before training (default: None)')
 
 def main():
     args = parser.parse_args()
@@ -75,10 +76,20 @@ def main():
     model_params['architecture'] = args.arch
     model_params['num_classes'] = args.num_classes
     model_params['in_channels'] = args.in_channels
+    if 'efficientnet' in args.arch:
+        model_params['image_size'] = args.img_size
     model = init_network(model_params)
 
+    if args.load_state_dict_path is not None:
+        init_pretrained = torch.load(args.load_state_dict_path)
+        model.load_state_dict(init_pretrained['state_dict'])
+    # state_dict = model.state_dict()
+    # torch.save({
+    #     'state_dict': state_dict
+    # }, '../output/densenet121_bestfitting_converted_classes.h5')
+    # sys.exit(0)
     # move network to gpu
-    # model = DataParallel(model)
+    model = DataParallel(model)
     model.cuda()
 
     # define loss function (criterion)
@@ -94,7 +105,8 @@ def main():
 
     # define scheduler
     try:
-        scheduler = eval(args.scheduler)(scheduler_lr_fraction=args.scheduler_lr_fraction)
+        scheduler = eval(args.scheduler)(scheduler_lr_fraction=args.scheduler_lr_fraction,
+                                         scheduler_epoch_offset=args.scheduler_epoch_offset)
     except:
         raise (RuntimeError("Scheduler {} not available!".format(args.scheduler)))
     optimizer = scheduler.schedule(model, start_epoch, args.epochs)[0]
