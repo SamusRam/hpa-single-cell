@@ -10,7 +10,7 @@ import math
 
 # https://www.kaggle.com/c/rsna-intracranial-hemorrhage-detection/discussion/112290
 class Efficient(nn.Module):
-    def __init__(self, in_channels=4, num_classes=19, encoder='efficientnet-b3', dropout=True, image_size=1024):
+    def __init__(self, in_channels=4, num_classes=19, encoder='efficientnet-b1', dropout=False, image_size=1024):
         super().__init__()
         n_channels_dict = {'efficientnet-b0': 1280, 'efficientnet-b1': 1280, 'efficientnet-b2': 1408,
                            'efficientnet-b3': 1536, 'efficientnet-b4': 1792, 'efficientnet-b5': 2048,
@@ -51,6 +51,13 @@ class Efficient(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.logit = nn.Linear(n_channels_dict[encoder], num_classes)
         self.dropout = dropout
+        # https://www.kaggle.com/iafoss/pretrained-resnet34-with-rgby-0-460-public-lb
+        if self.dropout:
+            num_features = n_channels_dict[encoder]
+            self.bn1 = nn.BatchNorm1d(num_features * 2)
+            self.fc1 = nn.Linear(num_features * 2, num_features)
+            self.bn2 = nn.BatchNorm1d(num_features)
+            self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.net.extract_features(x)

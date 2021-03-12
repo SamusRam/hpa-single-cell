@@ -25,12 +25,12 @@ class Adam45(SchedulerBase):
 
 
 class Adam20(SchedulerBase):
-    def __init__(self, scheduler_lr_fraction=1, scheduler_epoch_offset=0, params_list=None):
+    def __init__(self, scheduler_lr_multiplier=1, scheduler_epoch_offset=0, params_list=None):
         super(Adam20, self).__init__()
         self._lr = 3e-5
         self._cur_optimizer = None
         self.params_list=params_list
-        self.scheduler_lr_fraction = scheduler_lr_fraction
+        self.scheduler_lr_multiplier = scheduler_lr_multiplier
         self.scheduler_epoch_offset = scheduler_epoch_offset
 
     def schedule(self, net, epoch, epochs, **kwargs):
@@ -45,7 +45,7 @@ class Adam20(SchedulerBase):
         if epoch > 17:
             lr = 5e-7
 
-        lr *= self.scheduler_lr_fraction
+        lr *= self.scheduler_lr_multiplier
 
         self._lr = lr
         if self._cur_optimizer is None:
@@ -61,7 +61,7 @@ class Adam55(SchedulerBase):
         self.params_list=params_list
 
     def schedule(self,net, epoch, epochs, **kwargs):
-        lr = 30e-5
+        lr = 30e-5 * 5
         if epoch > 25:
             lr = 15e-5
         if epoch > 35:

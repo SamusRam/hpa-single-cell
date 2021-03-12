@@ -60,6 +60,7 @@ class DensenetClass(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.maxpool = nn.MaxPool2d(2, stride=2)
         self.logit = nn.Linear(num_features, num_classes)
+        self.logit.bias.data.fill_(0.0)
 
         # https://www.kaggle.com/iafoss/pretrained-resnet34-with-rgby-0-460-public-lb
         if self.dropout:
@@ -68,7 +69,7 @@ class DensenetClass(nn.Module):
             self.bn2 = nn.BatchNorm1d(num_features)
             self.relu = nn.ReLU(inplace=True)
 
-        if pretrained_file is not None:
+        if pretrained_file is not None and False:
             final_pretrained = torch.load(pretrained_file)
             prev_class_name_indices = get_new_class_name_indices_in_prev_comp_data()
             prev_class_name_indices += [27, 27]
@@ -76,6 +77,7 @@ class DensenetClass(nn.Module):
             state_dict['logit.weight'] = state_dict['logit.weight'][prev_class_name_indices, :]
             state_dict['logit.bias'] = state_dict['logit.bias'][prev_class_name_indices]
             self.load_state_dict(state_dict)
+            print('Loaded densenet bestfitting model')
 
     def forward(self, x):
         mean = [0.074598, 0.050630, 0.050891, 0.076287]#rgby

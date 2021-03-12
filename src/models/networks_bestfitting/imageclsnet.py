@@ -1,7 +1,5 @@
 from src.commons.config.config_bestfitting import *
 from .densenet import class_densenet121_dropout, class_densenet121_large_dropout
-from .inception_v3 import class_inceptionv3_dropout
-from .resnet import class_resnet34_dropout, class_resnet18_dropout
 from .efficientnet import class_efficientnet_dropout
 
 model_names = {

@@ -12,6 +12,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--obvious-staining", action='store_true')
+parser.add_argument("--n-folds", default=5, type=int)
 
 args = parser.parse_args()
 OBVIOUS_STAINING_FLAG = args.obvious_staining
@@ -63,12 +64,12 @@ plt.savefig(f'../output/image_level_labels{"_obvious_staining" if OBVIOUS_STAINI
 # splitting
 label_combinations = list(basepath_2_ohe_vector.values())
 img_paths_to_split_into_folds = list(basepath_2_ohe_vector.keys())
-kf = MultilabelStratifiedKFold(n_splits=3, shuffle=True, random_state=1905)
+kf = MultilabelStratifiedKFold(n_splits=args.n_folds, shuffle=True, random_state=1905)
 folds = []
 for trn_indices, val_indices in kf.split(img_paths_to_split_into_folds, y=label_combinations):
     trn_paths = [img_paths_to_split_into_folds[i] for i in trn_indices]
     val_paths = [img_paths_to_split_into_folds[i] for i in val_indices]
     folds.append([trn_paths, val_paths])
 
-with open(f'../input/imagelevel_folds{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}.pkl', 'wb') as f:
+with open(f'../input/imagelevel_folds{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}_{args.n_folds}.pkl', 'wb') as f:
     pickle.dump(folds, f)

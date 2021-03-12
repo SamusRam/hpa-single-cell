@@ -1,0 +1,3 @@
+#!/bin/bash
+python -m src.train.train_bestfitting --lr-reduce-patience 4 --init-lr $2 --fold $1 --gpu-id $3 --img_size 512 --batch_size 32 --scheduler-lr-multiplier 100 --gradient-accumulation-steps 3 --out_dir densenet121_512_subset_all_data_obvious_neg_grad_accum_start_lr_${2} > "512_densenet_fold${1}_lr_${2}.log"
+python -m src.train.train_bestfitting --lr-reduce-patience 4 --init-lr $2 --fold $1 --gpu-id $3  --img_size 1024 --batch_size 8 --gradient-accumulation-steps 12 --out_dir densenet121_1024_subset_all_data_obvious_neg_grad_accum_start_lr_${2} --load-state-dict-path "../output/models/densenet121_512_subset_all_data_obvious_neg_grad_accum_start_lr_${2}/fold${1}/final.pth" > "1024_densenet_fold${1}_lr_${2}.log"

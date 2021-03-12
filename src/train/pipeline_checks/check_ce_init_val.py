@@ -9,26 +9,33 @@ import torch
 import torch.optim
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler
+from torch import nn
 from torch.nn import DataParallel
 from torch.backends import cudnn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.optim import Adam, AdamW
 from sklearn.metrics import f1_score
-# import pytorch_warmup as warmup
 
-from ..data.augment_util_bestfitting import train_multi_augment2
-from ..models.layers_bestfitting.loss import *
-from ..models.layers_bestfitting.scheduler import *
-from ..models.networks_bestfitting.imageclsnet import init_network
-from ..data.datasets import ProteinDatasetImageLevel, BalancingSubSampler
-from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names
+from ...data.augment_util_bestfitting import train_multi_augment2
+from ...models.layers_bestfitting.loss import *
+from ...models.layers_bestfitting.scheduler import *
+from ...models.networks_bestfitting.imageclsnet import init_network
+from ...data.datasets import ProteinDatasetImageLevel, BalancingSubSampler
+from ...data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names
 from src.commons.utils import Logger
 import multiprocessing
 import time
 
-loss_names = ['FocalSymmetricLovaszHardLogLoss', 'FocalLoss']
+loss_names = ['BCE']
+
+class BCE(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, logit, target, epoch=0):
+        target = target.float()
+        pred_prob = F.sigmoid(logit)
+        return F.binary_cross_entropy(pred_prob, target)
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
 parser.add_argument('--out_dir', default='densenet121_1024_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
@@ -37,7 +44,7 @@ parser.add_argument('--arch', default='class_densenet121_large_dropout', type=st
                     help='model architecture (default: class_densenet121_large_dropout)')
 parser.add_argument('--num_classes', default=19, type=int, help='number of classes (default: 19)')
 parser.add_argument('--in_channels', default=4, type=int, help='in channels (default: 4)')
-parser.add_argument('--loss', default='FocalSymmetricLovaszHardLogLoss', choices=loss_names, type=str,
+parser.add_argument('--loss', default='BCE', choices=loss_names, type=str,
                     help='loss function: ' + ' | '.join(loss_names) + ' (deafault: FocalSymmetricLovaszHardLogLoss)')
 parser.add_argument('--scheduler', default='Adam45', type=str, help='scheduler name')
 parser.add_argument('--scheduler-lr-multiplier', default=1.0, type=float, help='scheduler lr multiplier')
@@ -107,7 +114,7 @@ def main():
 
     # define loss function (criterion)
     try:
-        criterion = eval(args.loss)().cuda()
+        criterion = BCE().cuda()
     except:
         raise(RuntimeError("Loss {} not available!".format(args.loss)))
 
@@ -198,28 +205,28 @@ def main():
         pin_memory=True,
     )
 
-    # import matplotlib.pyplot as plt
-    # from torchvision.utils import make_grid
-    # if not os.path.exists('temp_vis'):
-    #     os.makedirs('temp_vis')
-    #
-    # def show_images(images, i, nmax=64):
-    #
-    #     print(images.detach()[:nmax][0].shape)
-    #     for j, x in enumerate(images.detach()[:nmax]):
-    #         print(x.permute(1, 2, 0).max())
-    #         plt.imshow(x.permute(1, 2, 0)[:, :, :3])
-    #         plt.xticks([])
-    #         plt.yticks([])
-    #         plt.savefig(f'temp_vis/{i}_{j}.png')
-    #
-    # def show_batch(dl, nmax=64):
-    #     len(dl)
-    #     for i, images in enumerate(dl):
-    #         show_images(images[0], i, nmax)
-    #         break
-    #
-    # show_batch(train_loader)
+    import matplotlib.pyplot as plt
+    from torchvision.utils import make_grid
+    if not os.path.exists('temp_vis'):
+        os.makedirs('temp_vis')
+
+    def show_images(images, i, nmax=64):
+
+        print(images.detach()[:nmax][0].shape)
+        for j, x in enumerate(images.detach()[:nmax]):
+            print(x.permute(1, 2, 0).max())
+            plt.imshow(x.permute(1, 2, 0)[:, :, :3])
+            plt.xticks([])
+            plt.yticks([])
+            plt.savefig(f'temp_vis/{i}_{j}.png')
+
+    def show_batch(dl, nmax=64):
+        len(dl)
+        for i, images in enumerate(dl):
+            show_images(images[0], i, nmax)
+            break
+
+    show_batch(train_loader)
 
     valid_dataset = ProteinDatasetImageLevel(
         val_img_paths,
@@ -254,99 +261,14 @@ def main():
     log.write('-----------------------------------------------------------------------------------------------------------------\n')
     start_epoch += 1
 
-    if args.load_state_dict_path is not None:
-        with torch.no_grad():
-            valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, -1,
-                                                                             focal_loss)
-        print('\r', end='', flush=True)
-        log.write(
-            '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
-            (-1, -1, -1, -1, -1, valid_loss, valid_acc, valid_focal_loss, kaggle_score,
-             best_epoch, best_focal, -1))
-
-    for epoch in range(start_epoch, args.epochs + 1):
-        end = time.time()
-
-        # set manual seeds per epoch
-        np.random.seed(epoch)
-        torch.manual_seed(epoch)
-        torch.cuda.manual_seed_all(epoch)
-
-        # adjust learning rate for each epoch
-        lr_list = scheduler.step(model, epoch, args.epochs)
-        lr = lr_list[0]
-
-        # train for one epoch on train set
-        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch,
-                                            clipnorm=args.clipnorm, lr=lr, agg_steps=args.gradient_accumulation_steps)
-
-        with torch.no_grad():
-            valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, epoch, focal_loss)
-
-        # remember best loss and save checkpoint
-        is_best = valid_focal_loss < best_focal
-        best_loss = min(valid_focal_loss, best_loss)
-        best_epoch = epoch if is_best else best_epoch
-        best_focal = valid_focal_loss if is_best else best_focal
-
-        print('\r', end='', flush=True)
-        log.write('%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
-                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, valid_focal_loss, kaggle_score,
-                   best_epoch, best_focal, (time.time() - end) / 60))
-
-        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_focal=best_focal)
-
-
-def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5, agg_steps=20):
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    accuracy = AverageMeter()
-
-    # switch to train mode
-    model.train()
-
-    num_its = len(train_loader)
-    end = time.time()
-    iter = 0
-    print_freq = 1
-    for iter, iter_data in enumerate(train_loader, 0):
-        # measure data loading time
-        data_time.update(time.time() - end)
-
-        images, labels, indices = iter_data
-        images = Variable(images.cuda())
-        labels = Variable(labels.cuda())
-
-        outputs = model(images)
-        loss = criterion(outputs, labels, epoch=epoch)
-
-        losses.update(loss.item())
-        loss.backward()
-
-        if iter % agg_steps == 0:
-            torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
-            optimizer.step()
-            # zero out gradients so we can accumulate new ones over batches
-            optimizer.zero_grad()
-            # lr_scheduler.step()
-            # warmup_scheduler.dampen()
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        logits = outputs
-        probs = F.sigmoid(logits)
-        acc = multi_class_acc(probs, labels)
-        accuracy.update(acc.item())
-
-        if (iter + 1) % print_freq == 0 or iter == 0 or (iter + 1) == num_its:
-            print('\r%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  | ... ' % \
-                  (epoch - 1 + (iter + 1) / num_its, iter + 1, lr, losses.avg, accuracy.avg), \
-                  end='', flush=True)
-
-    return iter, losses.avg, accuracy.avg
+    with torch.no_grad():
+        valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, -1,
+                                                                         focal_loss)
+    print('\r', end='', flush=True)
+    log.write(
+        '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
+        (-1, -1, -1, -1, -1, valid_loss, valid_acc, valid_focal_loss, kaggle_score,
+         best_epoch, best_focal, -1))
 
 def validate(valid_loader, model, criterion, epoch, focal_loss, threshold=0.5):
     batch_time = AverageMeter()

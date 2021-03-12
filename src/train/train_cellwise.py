@@ -13,22 +13,19 @@ from torch.nn import DataParallel
 from torch.backends import cudnn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.optim import Adam, AdamW
 from sklearn.metrics import f1_score
-# import pytorch_warmup as warmup
 
 from ..data.augment_util_bestfitting import train_multi_augment2
 from ..models.layers_bestfitting.loss import *
 from ..models.layers_bestfitting.scheduler import *
 from ..models.networks_bestfitting.imageclsnet import init_network
-from ..data.datasets import ProteinDatasetImageLevel, BalancingSubSampler
-from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names
+from ..data.datasets import ProteinDatasetCellLevel
+from ..data.utils import get_train_df_ohe, get_public_df_ohe
 from src.commons.utils import Logger
 import multiprocessing
 import time
 
-loss_names = ['FocalSymmetricLovaszHardLogLoss', 'FocalLoss']
+loss_names = ['FocalSymmetricLovaszHardLogLoss']
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
 parser.add_argument('--out_dir', default='densenet121_1024_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
@@ -39,10 +36,10 @@ parser.add_argument('--num_classes', default=19, type=int, help='number of class
 parser.add_argument('--in_channels', default=4, type=int, help='in channels (default: 4)')
 parser.add_argument('--loss', default='FocalSymmetricLovaszHardLogLoss', choices=loss_names, type=str,
                     help='loss function: ' + ' | '.join(loss_names) + ' (deafault: FocalSymmetricLovaszHardLogLoss)')
-parser.add_argument('--scheduler', default='Adam45', type=str, help='scheduler name')
+parser.add_argument('--scheduler', default='Adam20', type=str, help='scheduler name')
 parser.add_argument('--scheduler-lr-multiplier', default=1.0, type=float, help='scheduler lr multiplier')
 parser.add_argument('--scheduler-epoch-offset', default=0, type=int, help='epoch offset for the scheduler')
-parser.add_argument('--epochs', default=40, type=int, help='number of total epochs to run (default: 55)')
+parser.add_argument('--epochs', default=20, type=int, help='number of total epochs to run (default: 55)')
 parser.add_argument('--img_size', default=1024, type=int, help='image size (default: 512)')
 parser.add_argument('--batch_size', default=8, type=int, help='train mini-batch size (default: 32)')
 parser.add_argument('--workers', default=multiprocessing.cpu_count() - 1, type=int, help='number of data loading workers (default: 3)')
@@ -50,15 +47,6 @@ parser.add_argument('--fold', default=0, type=int, help='index of fold (default:
 parser.add_argument('--clipnorm', default=1, type=int, help='clip grad norm')
 parser.add_argument('--resume', default=None, type=str, help='name of the latest checkpoint (default: None)')
 parser.add_argument('--load-state-dict-path', default=None, type=str, help='path to .h5 file with a state-dict to load before training (default: None)')
-parser.add_argument('--train-on-all-data', action='store_true')
-parser.add_argument('--gradient-accumulation-steps', default=50, type=int)
-parser.add_argument('--lr-reduce-patience', default=4, type=int)
-parser.add_argument('--init-lr', default=3e-4, type=float)
-parser.add_argument('--target-class-count-for-balancing', default=3000, type=int)
-parser.add_argument('--ignore-negs', action='store_true')
-parser.add_argument('--without-public-data', action='store_true')
-parser.add_argument('--effnet-encoder', default='efficientnet-b1', type=str)
-
 
 def main():
     args = parser.parse_args()
@@ -90,7 +78,6 @@ def main():
     model_params['in_channels'] = args.in_channels
     if 'efficientnet' in args.arch:
         model_params['image_size'] = args.img_size
-        model_params['encoder'] = args.effnet_encoder
     model = init_network(model_params)
 
     if args.load_state_dict_path is not None:
@@ -118,12 +105,11 @@ def main():
 
     # define scheduler
     try:
-        scheduler = eval(args.scheduler)() #(scheduler_lr_multiplier=args.scheduler_lr_multiplier,
-                                         # scheduler_epoch_offset=args.scheduler_epoch_offset)
+        scheduler = eval(args.scheduler)(scheduler_lr_multiplier=args.scheduler_lr_multiplier,
+                                         scheduler_epoch_offset=args.scheduler_epoch_offset)
     except:
         raise (RuntimeError("Scheduler {} not available!".format(args.scheduler)))
     optimizer = scheduler.schedule(model, start_epoch, args.epochs)[0]
-    # optimizer = AdamW(model.parameters(), lr=args.init_lr, betas=(0.9, 0.999), weight_decay=0.01)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -149,31 +135,22 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('../input/imagelevel_folds_obvious_staining.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]
 
     train_df = get_train_df_ohe()
-    if args.ignore_negs:
-        train_df['Negative'] = 0
-
-    train_paths_set = set(train_df['img_base_path'])
-    val_img_paths = [path for path in val_img_paths if path in train_paths_set]
-
     basepath_2_ohe_vector = {img: vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
-    if not args.without_public_data:
-        public_hpa_df_17 = get_public_df_ohe()
-        if args.ignore_negs:
-            public_hpa_df_17['Negative'] = 0
-        public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
-                                                                               public_hpa_df_17.iloc[:, 2:].values)}
-        basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
-    else:
-        trn_img_paths = [path for path in trn_img_paths if path in train_paths_set]
+    public_hpa_df_17 = get_public_df_ohe()
+    public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
+                                                                           public_hpa_df_17.iloc[:, 2:].values)}
+    basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
 
-    train_dataset = ProteinDatasetImageLevel(
+
+
+    train_dataset = ProteinDatasetCellLevel(
         trn_img_paths,
         basepath_2_ohe=basepath_2_ohe_vector,
         img_size=args.img_size,
@@ -182,44 +159,14 @@ def main():
         in_channels=args.in_channels,
         transform=train_transform
     )
-
-    class_names = get_class_names()
-    if args.train_on_all_data:
-        sampler = RandomSampler(train_dataset)
-    else:
-        sampler = BalancingSubSampler(trn_img_paths, basepath_2_ohe_vector, class_names, required_class_count=1500)
-
     train_loader = DataLoader(
         train_dataset,
-        sampler=sampler,
+        sampler=RandomSampler(train_dataset),
         batch_size=args.batch_size,
         drop_last=True,
         num_workers=args.workers,
         pin_memory=True,
     )
-
-    # import matplotlib.pyplot as plt
-    # from torchvision.utils import make_grid
-    # if not os.path.exists('temp_vis'):
-    #     os.makedirs('temp_vis')
-    #
-    # def show_images(images, i, nmax=64):
-    #
-    #     print(images.detach()[:nmax][0].shape)
-    #     for j, x in enumerate(images.detach()[:nmax]):
-    #         print(x.permute(1, 2, 0).max())
-    #         plt.imshow(x.permute(1, 2, 0)[:, :, :3])
-    #         plt.xticks([])
-    #         plt.yticks([])
-    #         plt.savefig(f'temp_vis/{i}_{j}.png')
-    #
-    # def show_batch(dl, nmax=64):
-    #     len(dl)
-    #     for i, images in enumerate(dl):
-    #         show_images(images[0], i, nmax)
-    #         break
-    #
-    # show_batch(train_loader)
 
     valid_dataset = ProteinDatasetImageLevel(
         val_img_paths,
@@ -239,31 +186,12 @@ def main():
         pin_memory=True
     )
 
-    # lr_scheduler = ReduceLROnPlateau(
-    #     optimizer, verbose=True, patience=args.lr_reduce_patience
-    # )
-
-    # num_steps = len(train_loader) * args.epochs // args.gradient_accumulation_steps
-    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
-    # warmup_scheduler = warmup.UntunedLinearWarmup(optimizer)
-
     focal_loss = FocalLoss().cuda()
     log.write('** start training here! **\n')
     log.write('\n')
     log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/focal/kaggle     |best_epoch/best_focal|  min \n')
     log.write('-----------------------------------------------------------------------------------------------------------------\n')
     start_epoch += 1
-
-    if args.load_state_dict_path is not None:
-        with torch.no_grad():
-            valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, -1,
-                                                                             focal_loss)
-        print('\r', end='', flush=True)
-        log.write(
-            '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
-            (-1, -1, -1, -1, -1, valid_loss, valid_acc, valid_focal_loss, kaggle_score,
-             best_epoch, best_focal, -1))
-
     for epoch in range(start_epoch, args.epochs + 1):
         end = time.time()
 
@@ -277,8 +205,7 @@ def main():
         lr = lr_list[0]
 
         # train for one epoch on train set
-        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch,
-                                            clipnorm=args.clipnorm, lr=lr, agg_steps=args.gradient_accumulation_steps)
+        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch, clipnorm=args.clipnorm, lr=lr)
 
         with torch.no_grad():
             valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, epoch, focal_loss)
@@ -297,7 +224,7 @@ def main():
         save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_focal=best_focal)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5, agg_steps=20):
+def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -314,6 +241,9 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5,
         # measure data loading time
         data_time.update(time.time() - end)
 
+        # zero out gradients so we can accumulate new ones over batches
+        optimizer.zero_grad()
+
         images, labels, indices = iter_data
         images = Variable(images.cuda())
         labels = Variable(labels.cuda())
@@ -324,13 +254,8 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5,
         losses.update(loss.item())
         loss.backward()
 
-        if iter % agg_steps == 0:
-            torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
-            optimizer.step()
-            # zero out gradients so we can accumulate new ones over batches
-            optimizer.zero_grad()
-            # lr_scheduler.step()
-            # warmup_scheduler.dampen()
+        # torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
+        optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
