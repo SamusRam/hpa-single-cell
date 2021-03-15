@@ -165,3 +165,10 @@ def get_new_class_name_indices_in_prev_comp_data():
         if class_name_new in old_comp_class_names:
             new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
     return list(new_name_index_2_old_name_index.keys())
+
+
+# def get_cell_bboxes_all():
+#     dataframes = []
+#     for path in ['../input/cell_bboxes_public.parquet', '../input/cell_bboxes_train.parquet']:
+
+

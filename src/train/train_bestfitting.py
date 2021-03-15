@@ -13,14 +13,14 @@ from torch.nn import DataParallel
 from torch.backends import cudnn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from sklearn.metrics import f1_score
+from sklearn.metrics import average_precision_score
 
 from ..data.augment_util_bestfitting import train_multi_augment2
 from ..models.layers_bestfitting.loss import *
 from ..models.layers_bestfitting.scheduler import *
 from ..models.networks_bestfitting.imageclsnet import init_network
-from ..data.datasets import ProteinDatasetImageLevel
-from ..data.utils import get_train_df_ohe, get_public_df_ohe
+from ..data.datasets import ProteinDatasetImageLevel, BalancingSubSampler
+from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names
 from src.commons.utils import Logger
 import multiprocessing
 import time
@@ -37,7 +37,7 @@ parser.add_argument('--in_channels', default=4, type=int, help='in channels (def
 parser.add_argument('--loss', default='FocalSymmetricLovaszHardLogLoss', choices=loss_names, type=str,
                     help='loss function: ' + ' | '.join(loss_names) + ' (deafault: FocalSymmetricLovaszHardLogLoss)')
 parser.add_argument('--scheduler', default='Adam20', type=str, help='scheduler name')
-parser.add_argument('--scheduler-lr-fraction', default=1.0, type=float, help='scheduler lr multiplier')
+parser.add_argument('--scheduler-lr-multiplier', default=1.0, type=float, help='scheduler lr multiplier')
 parser.add_argument('--scheduler-epoch-offset', default=0, type=int, help='epoch offset for the scheduler')
 parser.add_argument('--epochs', default=20, type=int, help='number of total epochs to run (default: 55)')
 parser.add_argument('--img_size', default=1024, type=int, help='image size (default: 512)')
@@ -47,6 +47,11 @@ parser.add_argument('--fold', default=0, type=int, help='index of fold (default:
 parser.add_argument('--clipnorm', default=1, type=int, help='clip grad norm')
 parser.add_argument('--resume', default=None, type=str, help='name of the latest checkpoint (default: None)')
 parser.add_argument('--load-state-dict-path', default=None, type=str, help='path to .h5 file with a state-dict to load before training (default: None)')
+# parser.add_argument('--train-on-all-data', action='store_true')
+# parser.add_argument('--target-class-count-for-balancing', default=3000, type=int)
+parser.add_argument('--gradient-accumulation-steps', default=50, type=int)
+parser.add_argument('--eval-at-start', action='store_true')
+parser.add_argument('--without-public-data', action='store_true')
 
 def main():
     args = parser.parse_args()
@@ -101,11 +106,11 @@ def main():
     start_epoch = 0
     best_loss = 1e5
     best_epoch = 0
-    best_focal = 1e5
+    best_mae = 0
 
     # define scheduler
     try:
-        scheduler = eval(args.scheduler)(scheduler_lr_fraction=args.scheduler_lr_fraction,
+        scheduler = eval(args.scheduler)(scheduler_lr_multiplier=args.scheduler_lr_multiplier,
                                          scheduler_epoch_offset=args.scheduler_epoch_offset)
     except:
         raise (RuntimeError("Scheduler {} not available!".format(args.scheduler)))
@@ -113,7 +118,7 @@ def main():
 
     # optionally resume from a checkpoint
     if args.resume:
-        args.resume = os.path.join(model_out_dir, args.resume)
+        # args.resume = os.path.join(model_out_dir, args.resume)
         if os.path.isfile(args.resume):
             # load checkpoint weights and update model and optimizer
             log.write(">> Loading checkpoint:\n>> '{}'\n".format(args.resume))
@@ -121,7 +126,7 @@ def main():
             checkpoint = torch.load(args.resume)
             start_epoch = checkpoint['epoch']
             best_epoch = checkpoint['best_epoch']
-            best_focal = checkpoint['best_score']
+            best_mae = checkpoint['best_score']
             model.module.load_state_dict(checkpoint['state_dict'])
 
             optimizer_fpath = args.resume.replace('.pth', '_optim.pth')
@@ -135,7 +140,7 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds_obvious_staining.pkl', 'rb') as f:
+    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]
@@ -143,10 +148,22 @@ def main():
     train_df = get_train_df_ohe()
     basepath_2_ohe_vector = {img: vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
-    public_hpa_df_17 = get_public_df_ohe()
-    public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
-                                                                           public_hpa_df_17.iloc[:, 2:].values)}
-    basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
+    # public_hpa_df_17 = get_public_df_ohe()
+    # public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
+    #                                                                        public_hpa_df_17.iloc[:, 2:].values)}
+    # basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
+
+    train_paths_set = set(train_df['img_base_path'])
+
+    if not args.without_public_data:
+        public_hpa_df_17 = get_public_df_ohe()
+        # if args.ignore_negs:
+        #     public_hpa_df_17['Negative'] = 0
+        public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
+                                                                               public_hpa_df_17.iloc[:, 2:].values)}
+        basepath_2_ohe_vector.update(public_basepath_2_ohe_vector)
+    else:
+        trn_img_paths = [path for path in trn_img_paths if path in train_paths_set]
 
     train_dataset = ProteinDatasetImageLevel(
         trn_img_paths,
@@ -157,6 +174,14 @@ def main():
         in_channels=args.in_channels,
         transform=train_transform
     )
+
+    # class_names = get_class_names()
+    # if args.train_on_all_data:
+    #     sampler = RandomSampler(train_dataset)
+    # else:
+    #     sampler = BalancingSubSampler(trn_img_paths, basepath_2_ohe_vector, class_names,
+    #                                   required_class_count=args.target_class_count_for_balancing)
+
     train_loader = DataLoader(
         train_dataset,
         sampler=RandomSampler(train_dataset),
@@ -165,6 +190,8 @@ def main():
         num_workers=args.workers,
         pin_memory=True,
     )
+
+    val_img_paths = [path for path in val_img_paths if path in train_paths_set]
 
     valid_dataset = ProteinDatasetImageLevel(
         val_img_paths,
@@ -187,9 +214,20 @@ def main():
     focal_loss = FocalLoss().cuda()
     log.write('** start training here! **\n')
     log.write('\n')
-    log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/focal/kaggle     |best_epoch/best_focal|  min \n')
+    log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/focal/mae     |best_epoch/best_mae|  min \n')
     log.write('-----------------------------------------------------------------------------------------------------------------\n')
     start_epoch += 1
+
+    if args.eval_at_start is not None:
+        with torch.no_grad():
+            valid_loss, valid_acc, valid_focal_loss, valid_mae = validate(valid_loader, model, criterion, -1,
+                                                                             focal_loss)
+        print('\r', end='', flush=True)
+        log.write(
+            '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
+            (-1, -1, -1, -1, -1, valid_loss, valid_acc, valid_focal_loss, valid_mae,
+             best_epoch, best_mae, -1))
+
     for epoch in range(start_epoch, args.epochs + 1):
         end = time.time()
 
@@ -203,26 +241,27 @@ def main():
         lr = lr_list[0]
 
         # train for one epoch on train set
-        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch, clipnorm=args.clipnorm, lr=lr)
+        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch,
+                                            clipnorm=args.clipnorm, lr=lr, agg_steps=args.gradient_accumulation_steps)
 
         with torch.no_grad():
-            valid_loss, valid_acc, valid_focal_loss, kaggle_score = validate(valid_loader, model, criterion, epoch, focal_loss)
+            valid_loss, valid_acc, valid_focal_loss, valid_mae = validate(valid_loader, model, criterion, epoch, focal_loss)
 
         # remember best loss and save checkpoint
-        is_best = valid_focal_loss < best_focal
+        is_best = valid_mae > best_mae
         best_loss = min(valid_focal_loss, best_loss)
         best_epoch = epoch if is_best else best_epoch
-        best_focal = valid_focal_loss if is_best else best_focal
+        best_mae = valid_mae if is_best else best_mae
 
         print('\r', end='', flush=True)
         log.write('%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.4f    |  %6.1f    %6.4f   | %3.1f min \n' % \
-                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, valid_focal_loss, kaggle_score,
-                   best_epoch, best_focal, (time.time() - end) / 60))
+                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, valid_focal_loss, valid_mae,
+                   best_epoch, best_mae, (time.time() - end) / 60))
 
-        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_focal=best_focal)
+        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_mae=best_mae)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5):
+def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5, agg_steps=30):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -235,12 +274,10 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5)
     end = time.time()
     iter = 0
     print_freq = 1
+    optimizer.zero_grad()
     for iter, iter_data in enumerate(train_loader, 0):
         # measure data loading time
         data_time.update(time.time() - end)
-
-        # zero out gradients so we can accumulate new ones over batches
-        optimizer.zero_grad()
 
         images, labels, indices = iter_data
         images = Variable(images.cuda())
@@ -251,6 +288,12 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5)
 
         losses.update(loss.item())
         loss.backward()
+
+        if iter % agg_steps == 0:
+            torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
+            optimizer.step()
+            # zero out gradients so we can accumulate new ones over batches
+            optimizer.zero_grad()
 
         # torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
         optimizer.step()
@@ -313,11 +356,11 @@ def validate(valid_loader, model, criterion, epoch, focal_loss, threshold=0.5):
     valid_focal_loss = focal_loss.forward(torch.from_numpy(logits), torch.from_numpy(y_true))
 
     y_pred = probs > threshold
-    kaggle_score = f1_score(y_true, y_pred, average='macro')
+    kaggle_score = average_precision_score(y_true, y_pred, average='macro')
 
     return losses.avg, accuracy.avg, valid_focal_loss, kaggle_score
 
-def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_epoch=None, best_focal=None):
+def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_epoch=None, best_mae=None):
     if type(model) == DataParallel:
         state_dict = model.module.state_dict()
     else:
@@ -331,7 +374,7 @@ def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_e
         'state_dict': state_dict,
         'best_epoch': best_epoch,
         'epoch': epoch,
-        'best_score': best_focal,
+        'best_score': best_mae,
     }, model_fpath)
 
     optim_fpath = os.path.join(model_out_dir, '%03d_optim.pth' % epoch)

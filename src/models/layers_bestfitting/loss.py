@@ -4,23 +4,28 @@ from torch import nn
 from src.commons.config.config_bestfitting import *
 from .hard_example import *
 from .lovasz_losses import *
+import torch.nn.functional as F
 
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=2):
+    def __init__(self, gamma=2, alpha=0.25):
         super().__init__()
         self.gamma = gamma
+        self.alpha = alpha
 
     def forward(self, logit, target, epoch=0):
         target = target.float()
-        max_val = (-logit).clamp(min=0)
-        loss = logit - logit * target + max_val + \
-               ((-max_val).exp() + (-logit - max_val).exp()).log()
+        pred_prob = F.sigmoid(logit)
+        ce = F.binary_cross_entropy(pred_prob, target, reduction='none')
 
-        invprobs = F.logsigmoid(-logit * (target * 2.0 - 1.0))
-        loss = (invprobs * self.gamma).exp() * loss
-        if len(loss.size())==2:
-            loss = loss.sum(dim=1)
+        p_t = (target * pred_prob) + (1 - target) * (1 - pred_prob)
+
+        modulating_factor = torch.pow((1.0 - p_t), self.gamma)
+        if self.alpha is not None:
+            alpha_factor = target * self.alpha + (1 - target) * (1 - self.alpha)
+        else:
+            alpha_factor = 1
+        loss = alpha_factor * modulating_factor * ce
         return loss.mean()
 
 class HardLogLoss(nn.Module):
@@ -84,7 +89,7 @@ class FocalSymmetricLovaszHardLogLoss(nn.Module):
         focal_loss = self.focal_loss.forward(logit, labels, epoch)
         slov_loss = self.slov_loss.forward(logit, labels, epoch)
         log_loss = self.log_loss.forward(logit, labels, epoch)
-        loss = focal_loss*0.5 + slov_loss*0.5 +log_loss * 0.5
+        loss = focal_loss + slov_loss*0.5 +log_loss * 0.5
         return loss
 
 # https://github.com/ronghuaiyang/arcface-pytorch

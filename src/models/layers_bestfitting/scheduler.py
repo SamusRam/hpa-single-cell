@@ -25,12 +25,12 @@ class Adam45(SchedulerBase):
 
 
 class Adam20(SchedulerBase):
-    def __init__(self, scheduler_lr_fraction=1, scheduler_epoch_offset=0, params_list=None):
+    def __init__(self, scheduler_lr_multiplier=1, scheduler_epoch_offset=0, params_list=None):
         super(Adam20, self).__init__()
         self._lr = 3e-5
         self._cur_optimizer = None
         self.params_list=params_list
-        self.scheduler_lr_fraction = scheduler_lr_fraction
+        self.scheduler_lr_multiplier = scheduler_lr_multiplier
         self.scheduler_epoch_offset = scheduler_epoch_offset
 
     def schedule(self, net, epoch, epochs, **kwargs):
@@ -45,7 +45,65 @@ class Adam20(SchedulerBase):
         if epoch > 17:
             lr = 5e-7
 
-        lr *= self.scheduler_lr_fraction
+        lr *= self.scheduler_lr_multiplier
+
+        self._lr = lr
+        if self._cur_optimizer is None:
+            self._cur_optimizer = optim.Adam(net.parameters(), lr=lr)#, weight_decay=0.0005
+        return self._cur_optimizer, self._lr
+
+
+class Adam10(SchedulerBase):
+    def __init__(self, scheduler_lr_multiplier=1, scheduler_epoch_offset=0, params_list=None):
+        super(Adam10, self).__init__()
+        self._lr = 3e-5
+        self._cur_optimizer = None
+        self.params_list=params_list
+        self.scheduler_lr_multiplier = scheduler_lr_multiplier
+        self.scheduler_epoch_offset = scheduler_epoch_offset
+
+    def schedule(self, net, epoch, epochs, **kwargs):
+        epoch += self.scheduler_epoch_offset
+        lr = 1e-5
+        if epoch > 2:
+            lr = 5e-6
+        if epoch > 4:
+            lr = 2e-6
+        if epoch > 6:
+            lr = 1e-6
+        if epoch > 8:
+            lr = 5e-7
+
+        lr *= self.scheduler_lr_multiplier
+
+        self._lr = lr
+        if self._cur_optimizer is None:
+            self._cur_optimizer = optim.Adam(net.parameters(), lr=lr)#, weight_decay=0.0005
+        return self._cur_optimizer, self._lr
+
+
+class Adam5(SchedulerBase):
+    def __init__(self, scheduler_lr_multiplier=1, scheduler_epoch_offset=0, params_list=None):
+        super(Adam5, self).__init__()
+        self._lr = 1e-5
+        self._cur_optimizer = None
+        self.params_list=params_list
+        self.scheduler_lr_multiplier = scheduler_lr_multiplier
+        self.scheduler_epoch_offset = scheduler_epoch_offset
+
+    def schedule(self, net, epoch, epochs, **kwargs):
+        epoch += self.scheduler_epoch_offset
+        lr = 1e-5
+        if epoch > 1:
+            lr = 5e-6
+        if epoch > 2:
+            lr = 2e-6
+        if epoch > 3:
+            lr = 1e-6
+        if epoch >= 4:
+            lr = 5e-7
+
+        lr *= self.scheduler_lr_multiplier
 
         self._lr = lr
         if self._cur_optimizer is None:
