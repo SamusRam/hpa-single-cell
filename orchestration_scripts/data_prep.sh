@@ -8,6 +8,8 @@
 #python -m src.preprocessing.create_imagelevel_folds
 #python -m src.preprocessing.create_imagelevel_folds --obvious-staining
 
+#python -m src.preprocessing.hpa-duplicate-images-in-train.py
+
 #python -m src.preprocessing.create_denoising_folds
 
 for fold_i in {0..4}; do

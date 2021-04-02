@@ -3,7 +3,11 @@ nohup bash orchestration_scripts/data_prep.sh &
 
 nohup bash orchestration_scripts/train_init.sh &
 
+nohup python -m src.preprocessing.bestfitting_duplicates_search &
+
 nohup bash orchestration_scripts/bbox_generation.sh &
+
+nohup python -m src.predict.predict_cells_from_image_level_densenet > image_level_pred.log &
 
 bash orchestration_scripts/graph_denoising_init.sh
 ------------------

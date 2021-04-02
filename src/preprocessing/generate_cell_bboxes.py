@@ -14,6 +14,7 @@ from hpacellseg.utils import label_cell, label_nuclei
 import warnings
 warnings.simplefilter("ignore")
 import logging
+from tqdm.auto import tqdm
 
 from ..data.datasets import ProteinMLDatasetModified
 from ..data.utils import get_public_df_ohe, get_train_df_ohe
@@ -22,6 +23,9 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--public-data", action='store_true')
+parser.add_argument('--gpu-id', default='0', type=str)
+parser.add_argument('--process-backward', action='store_true')
+parser.add_argument('--repair-zero-sized-masks', action='store_true')
 
 args = parser.parse_args()
 
@@ -31,8 +35,9 @@ logger = logging.getLogger(
     f'Bbox generation'
 )
 
-IMG_HEIGHT = IMG_WIDTH = 1024
-BATCH_SIZE = 4
+os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
+
+BATCH_SIZE = 2
 NUM_CORES = multiprocessing.cpu_count()
 PUBLIC_DATA_FLAG = args.public_data
 PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
@@ -62,11 +67,14 @@ def get_masks(imgs):
               [img[:, :, 3] for img in imgs],
               [img[:, :, 2] for img in imgs]]
 
-    nuc_segmentations = segmentator.pred_nuclei(images[2])
-    cell_segmentations = segmentator.pred_cells(images)
+    nuc_segmentations, median_nuc_sizes = segmentator.pred_nuclei(images[2])
+    cell_segmentations, init_sizes = segmentator.pred_cells(images, median_nuc_sizes=median_nuc_sizes)
     cell_masks = []
     for i in range(len(cell_segmentations)):
-        _, cell_mask = label_cell(nuc_segmentations[i], cell_segmentations[i])
+        cell_mask = label_cell(nuc_segmentations[i],
+                               cell_segmentations[i],
+                               median_nuc_sizes[i],
+                               return_nuclei_label=False)
         cell_masks.append(cell_mask)
 
     return cell_masks
@@ -75,7 +83,20 @@ def get_masks(imgs):
 def store_cells(img_ids, folder=IMGS_FOLDER,
                        batch_size=BATCH_SIZE, num_workers=NUM_CORES//3):
 
-    img_ids = [img_id for img_id in img_ids if not os.path.exists(os.path.join(OUTPUT_PATH, f'{img_id}.pkl'))]
+    if args.repair_zero_sized_masks:
+        img_ids = []
+        for file_name in tqdm(os.listdir(OUTPUT_PATH), desc='checking masks to repair..'):
+            bboxes_path = os.path.join(OUTPUT_PATH, file_name)
+            bboxes_df = pd.read_pickle(bboxes_path)
+            for _, row in bboxes_df.iterrows():
+                height = row['y_max'] - row['y_min']
+                width = row['x_max'] - row['x_min']
+                if min(height, width) == 0:
+                    img_ids.append(file_name.replace('.pkl', ''))
+        img_ids = list(set(img_ids))
+        print(len(img_ids))
+    else:
+        img_ids = [img_id for img_id in img_ids if not os.path.exists(os.path.join(OUTPUT_PATH, f'{img_id}.pkl'))]
     dataset = ProteinMLDatasetModified(img_ids, folder=folder, resize=False)
     loader = DataLoader(
         dataset,
@@ -86,20 +107,11 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
         pin_memory=False, collate_fn=lambda x: x
     )
 
-    # def get_bbox(cell_bool_mask, img):
-    #     cell_img = img.copy()
-    #     height, width = cell_img.shape[:2]
-    #     cell_rows, cell_cols = np.where(cell_bool_mask)
-    #     x_min, x_max = [int(i) for i in np.quantile(cell_rows, [0.03, 0.97])]
-    #     y_min, y_max = [int(i) for i in np.quantile(cell_cols, [0.03, 0.97])]
-    #
-    #     return [x_min, y_min], [x_max, y_max], height, width
-
     def get_mask_index(cell_bool_mask, masks_all):
         cell_rows, cell_cols = np.where(cell_bool_mask)
         try:
-            y_min, y_max = [int(i) for i in np.quantile(cell_rows, [0.03, 0.97])]
-            x_min, x_max = [int(i) for i in np.quantile(cell_cols, [0.03, 0.97])]
+            y_min, y_max = [int(i) for i in np.quantile(cell_rows, [0.01, 0.99])]
+            x_min, x_max = [int(i) for i in np.quantile(cell_cols, [0.01, 0.99])]
         except TypeError:
             y_min = np.min(cell_rows)
             y_max = np.max(cell_rows)
@@ -162,5 +174,7 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
 
 
 img_ids = main_df['ID'].values
+if args.process_backward:
+    img_ids = img_ids[::-1]
 
 store_cells(img_ids)

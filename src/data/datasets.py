@@ -220,11 +220,12 @@ class ProteinDatasetImageLevel(Dataset):
         # plt.savefig(f'temp_vis/{os.path.basename(img_path)}')
         image = torch.from_numpy(image)
 
+        img_id = os.path.basename(img_path)
         if self.return_label:
             label = self.basepath_2_ohe[img_path]
-            return image, label, index
+            return image, label, img_id
         else:
-            return image, index
+            return image, img_id
 
     def __len__(self):
         return self.num
