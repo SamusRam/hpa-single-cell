@@ -31,8 +31,7 @@ def get_class_names():
     return class_names
 
 
-def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None,
-                     clean_from_duplicates=False):
+def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None):
     train_df = pd.read_csv(os.path.join(root_folder_path, 'train.csv'))
     train_df['img_base_path'] = train_df['ID'].map(lambda x: os.path.join(root_folder_path, 'train', x))
     # One-hot encoding classes
@@ -254,11 +253,3 @@ def get_new_class_name_indices_in_prev_comp_data():
         if class_name_new in old_comp_class_names:
             new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
     return list(new_name_index_2_old_name_index.keys())
-
-
-# def get_cell_bboxes_all():
-#     dataframes = []
-#     for path in ['../input/cell_bboxes_public.parquet', '../input/cell_bboxes_train.parquet']:
-
-
-

@@ -158,8 +158,8 @@ class ProteinMLDatasetModified(Dataset):
 
     def __len__(self):
         return self.num
-
-
+    
+    
 class ProteinDatasetImageLevel(Dataset):
     def __init__(self,
                  img_paths,
@@ -201,23 +201,13 @@ class ProteinDatasetImageLevel(Dataset):
     def __getitem__(self, index):
         img_path = self.img_paths[index]
         image = self.read_rgby(img_path)
-        # print('after read', image.shape)
+
         if self.transform is not None:
             image = self.transform(image)
-
-        # print('after transform', image.shape)
         image = image / 255.0
         image = image.astype(np.float32)
         if len(image.shape) == 3:
             image = image.transpose((2, 0, 1))
-
-        # import matplotlib.pyplot as plt
-        # if not os.path.exists('temp_vis'):
-        #     os.makedirs('temp_vis')
-        # plt.figure()
-        # plt.imshow(image[:, :, :3])
-        # print('last', image.shape)
-        # plt.savefig(f'temp_vis/{os.path.basename(img_path)}')
         image = torch.from_numpy(image)
 
         img_id = os.path.basename(img_path)
