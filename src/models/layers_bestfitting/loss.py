@@ -5,9 +5,53 @@ from src.commons.config.config_bestfitting import *
 from .hard_example import *
 from .lovasz_losses import *
 import torch.nn.functional as F
+import torch
+from typing import Optional
 
 
-class FocalLoss(nn.Module):
+# inspired with https://github.com/snorkel-team/snorkel/blob/master/snorkel/classification/loss.py
+def binary_cross_entropy_with_probs(
+    input: torch.Tensor,
+    target: torch.Tensor,
+    weight: Optional[torch.Tensor] = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    if len(input.shape) == 1:
+        input = input.reshape(-1, 1)
+        target = target.reshape(-1, 1)
+    num_points, num_classes = input.shape
+
+    # Note that t.new_zeros, t.new_full put tensor on same device as t
+    # cum_losses = input.new_zeros(num_points)
+    # target_temp = input.new_full((num_points,), 1, dtype=torch.long)
+    # for y in range(num_classes):
+    #
+    #     # modified from https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Loss.cpp#L214
+    #     # log-sum-exp trick: http://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
+    #     max_val = (-input[:, y]).clamp(min=0)
+    #
+    #     y_loss = (1 - target_temp) * input[:, y] + max_val + ((-max_val).exp() + (-input[:, y] - max_val).exp()).log()
+    #     if weight is not None:
+    #         y_loss = y_loss * weight[y]
+    #     cum_losses += target[:, y].float() * y_loss
+
+    max_val = (-input).clamp(min=0)
+
+    y_loss = (1 - target) * input + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
+    if weight is not None:
+        y_loss = y_loss * weight
+
+    if reduction == "none":
+        return y_loss
+    elif reduction == "mean":
+        return y_loss.mean()
+    elif reduction == "sum":
+        return y_loss.sum()
+    else:
+        raise ValueError("Keyword 'reduction' must be one of ['none', 'mean', 'sum']")
+
+
+class FocalLossSimple(nn.Module):
     def __init__(self, gamma=2, alpha=0.25):
         super().__init__()
         self.gamma = gamma
@@ -16,7 +60,7 @@ class FocalLoss(nn.Module):
     def forward(self, logit, target, epoch=0):
         target = target.float()
         pred_prob = F.sigmoid(logit)
-        ce = F.binary_cross_entropy(pred_prob, target, reduction='none')
+        ce = F.binary_cross_entropy_with_logits(logit, target, reduction='none')
 
         p_t = (target * pred_prob) + (1 - target) * (1 - pred_prob)
 
@@ -28,11 +72,32 @@ class FocalLoss(nn.Module):
         loss = alpha_factor * modulating_factor * ce
         return loss.mean()
 
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2):
+        super().__init__()
+        self.gamma = gamma
+
+    def forward(self, logit, target, epoch=0):
+        target = target.float()
+        max_val = (-logit).clamp(min=0)
+        loss = logit - logit * target + max_val + \
+               ((-max_val).exp() + (-logit - max_val).exp()).log()
+
+        invprobs = F.logsigmoid(-logit * (target * 2.0 - 1.0))
+        loss = (invprobs * self.gamma).exp() * loss
+        if len(loss.size())==2:
+            loss = loss.sum(dim=1)
+        return loss.mean()
+
+
 class HardLogLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, soft_labels=False, symmetric=False):
         super(HardLogLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
+        self.bce_loss = binary_cross_entropy_with_probs if soft_labels else nn.BCEWithLogitsLoss()
         self.__classes_num = NUM_CLASSES
+        self.soft_labels = soft_labels
+        self.symmetric = symmetric
 
     def forward(self, logits, labels,epoch=0):
         labels = labels.float()
@@ -40,10 +105,29 @@ class HardLogLoss(nn.Module):
         for i in range(NUM_CLASSES):
             logit_ac=logits[:,i]
             label_ac=labels[:,i]
-            logit_ac, label_ac=get_hard_samples(logit_ac,label_ac)
-            loss+=self.bce_loss(logit_ac,label_ac)
+            logit_ac, label_ac = (get_hard_samples_soft_symmetric(logit_ac,label_ac) if self.soft_labels else
+                                  (get_hard_samples_symmetric(logit_ac,label_ac) if self.symmetric else get_hard_samples(logit_ac,label_ac)))
+            if len(label_ac):
+                loss += self.bce_loss(logit_ac, label_ac)
         loss = loss/NUM_CLASSES
         return loss
+
+
+class SoftCEHardLogLoss(nn.Module):
+    def __init__(self, hard_loss_weight=0.5):
+        super(SoftCEHardLogLoss, self).__init__()
+        self.soft_ce = binary_cross_entropy_with_probs
+        self.log_loss = HardLogLoss(soft_labels=True)
+        self.hard_loss_weight = hard_loss_weight
+
+    def forward(self, logit, labels, epoch='for compatibility'):
+        labels = labels.float()
+        ce_loss = self.soft_ce(logit, labels)
+        log_loss = self.log_loss.forward(logit, labels)
+        loss = ce_loss*(1 - self.hard_loss_weight) + log_loss*self.hard_loss_weight
+        return loss
+        # return ce_loss
+
 
 # https://github.com/bermanmaxim/LovaszSoftmax/tree/master/pytorch
 def lovasz_hinge(logits, labels, ignore=None, per_class=True):
@@ -78,6 +162,7 @@ class SymmetricLovaszLoss(nn.Module):
         loss=((lovasz_hinge(logits, labels)) + (lovasz_hinge(-logits, 1 - labels))) / 2
         return loss
 
+
 class FocalSymmetricLovaszHardLogLoss(nn.Module):
     def __init__(self):
         super(FocalSymmetricLovaszHardLogLoss, self).__init__()
@@ -89,7 +174,23 @@ class FocalSymmetricLovaszHardLogLoss(nn.Module):
         focal_loss = self.focal_loss.forward(logit, labels, epoch)
         slov_loss = self.slov_loss.forward(logit, labels, epoch)
         log_loss = self.log_loss.forward(logit, labels, epoch)
-        loss = focal_loss + slov_loss*0.5 +log_loss * 0.5
+        loss = focal_loss*0.5 + slov_loss*0.5 +log_loss * 0.5
+        return loss
+
+
+class FocalSymmetricLovaszSymHardLogLoss(nn.Module):
+    def __init__(self):
+        super(FocalSymmetricLovaszSymHardLogLoss, self).__init__()
+        self.focal_loss = FocalLoss()
+        self.slov_loss = SymmetricLovaszLoss()
+        self.log_loss = HardLogLoss(symmetric=True)
+
+    def forward(self, logit, labels,epoch=0):
+        labels = labels.float()
+        focal_loss = self.focal_loss.forward(logit, labels, epoch)
+        slov_loss = self.slov_loss.forward(logit, labels, epoch)
+        log_loss = self.log_loss.forward(logit, labels, epoch)
+        loss = focal_loss*0.5 + slov_loss*0.5 +log_loss * 0.5
         return loss
 
 # https://github.com/ronghuaiyang/arcface-pytorch

@@ -1,9 +1,8 @@
 import os
 
+import cv2
 import numpy as np
 import pandas as pd
-import cv2
-
 
 SPECIFIED_CLASS_NAMES = """0. Nucleoplasm
     1. Nuclear membrane
@@ -31,8 +30,10 @@ def get_class_names():
     return class_names
 
 
-def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None):
+def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None,
+                     clean_from_duplicates=False, clean_mitotic=False, clean_aggresome=False):
     train_df = pd.read_csv(os.path.join(root_folder_path, 'train.csv'))
+
     train_df['img_base_path'] = train_df['ID'].map(lambda x: os.path.join(root_folder_path, 'train', x))
     # One-hot encoding classes
     train_df['Label'] = train_df['Label'].map(lambda x: map(int, x.split('|'))).map(set)
@@ -44,7 +45,23 @@ def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classifica
     if clean_from_duplicates:
         duplicates = pd.read_csv('../output/duplicates.csv.gz')
         forbidden_basepaths = set(duplicates['Extra'].values)
+        for needed_id in ['5d36256a-bbbe-11e8-b2ba-ac1f6b6435d0',
+                          '68d5cd28-bbc6-11e8-b2bc-ac1f6b6435d0',
+                          '96427802-bbac-11e8-b2ba-ac1f6b6435d0',
+                          '1469d230-bbc5-11e8-b2bc-ac1f6b6435d0',
+                          '78411ae2-bbc6-11e8-b2bc-ac1f6b6435d0',
+                          '14b5422c-bbbd-11e8-b2ba-ac1f6b6435d0']:
+            forbidden_basepaths.remove(f'../input/hpa-single-cell-image-classification/train/{needed_id}')
         train_df = train_df[~train_df['img_base_path'].isin(forbidden_basepaths)]
+
+    if clean_mitotic:
+        cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+        checked_mitotic_ids = set(cherrypicked_mitotic_spindle['ID'].values)
+        train_df = train_df[(train_df['Mitotic spindle'] == 0) | (train_df['ID'].isin(checked_mitotic_ids))]
+
+    if clean_aggresome:
+        aggresome_blacklist_ids = set(pd.read_csv('../input/aggresome_blacklist.csv')['ID'].values)
+        train_df = train_df[(train_df['Aggresome'] == 0) | np.logical_not(train_df['ID'].isin(aggresome_blacklist_ids))]
     return train_df[['ID', 'img_base_path'] + class_names]
 
 
@@ -56,7 +73,8 @@ def are_all_imgs_present(base_path):
 
 
 def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_names=None,
-                      imgs_root_path='../input/publichpa_1024', clean_from_duplicates=False):
+                      imgs_root_path='../input/publichpa_1024', clean_from_duplicates=False,
+                      clean_mitotic=False, clean_aggresome=False):
     if class_names is None:
         class_names = get_class_names()
 
@@ -69,7 +87,6 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_name
 
     celllines = ['A-431', 'A549', 'EFO-21', 'HAP1', 'HEK 293', 'HUVEC TERT2', 'HaCaT', 'HeLa', 'PC-3', 'RH-30',
                  'RPTEC TERT1', 'SH-SY5Y', 'SK-MEL-30', 'SiHa', 'U-2 OS', 'U-251 MG', 'hTCEpi']
-
 
     public_hpa_df['Label_idx'] = public_hpa_df['Label_idx'].map(lambda x: map(int, x.split('|'))).map(set)
 
@@ -93,6 +110,18 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_name
         duplicates = pd.read_csv('../output/duplicates.csv.gz')
         forbidden_basepaths = set(duplicates['Extra'].values)
         public_hpa_df_17 = public_hpa_df_17[~public_hpa_df_17['img_base_path'].isin(forbidden_basepaths)]
+
+    if clean_mitotic:
+        cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+        checked_mitotic_ids = set(cherrypicked_mitotic_spindle['ID'].values)
+        public_hpa_df_17 = public_hpa_df_17[
+            (public_hpa_df_17['Mitotic spindle'] == 0) | (public_hpa_df_17['ID'].isin(checked_mitotic_ids))]
+
+    if clean_aggresome:
+        aggresome_blacklist_ids = set(pd.read_csv('../input/aggresome_blacklist.csv')['ID'].values)
+        public_hpa_df_17 = public_hpa_df_17[
+            (public_hpa_df_17['Aggresome'] == 0) | np.logical_not(public_hpa_df_17['ID'].isin(aggresome_blacklist_ids))]
+
     return public_hpa_df_17[['ID', 'img_base_path'] + class_names]
 
 
@@ -106,18 +135,26 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
                        base_public_path='../input/publichpa_1024',
                        trn_cell_boxes_path='../input/cell_bboxes_train',
                        public_cell_boxes_path='../input/cell_bboxes_public',
-                       cell_img_size=512, return_raw=False):
+                       cell_img_size=512, return_raw=False, sample_size=None, cell_labels_df=None):
     is_from_train = 'train' in img_base_path
     cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
     img_id = os.path.basename(img_base_path)
     bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
     bboxes_df = pd.read_pickle(bboxes_path)
+    print('bboxes_df len', len(bboxes_df))
 
     img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
 
     cell_imgs = []
+    if cell_labels_df is not None:
+        cell_labels = []
 
-    for _, row in bboxes_df.iterrows():
+    if sample_size is not None and sample_size < len(bboxes_df):
+        iterator = bboxes_df.sample(sample_size).iterrows()
+    else:
+        iterator = bboxes_df.iterrows()
+
+    for cell_i, row in iterator:
         height = row['y_max'] - row['y_min']
         width = row['x_max'] - row['x_min']
 
@@ -147,8 +184,67 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
 
         if cell_img_size is not None:
             img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
-        cell_imgs.append(img_cell)
-    return cell_imgs
+
+        if cell_labels_df is not None:
+            if cell_i - 1 in cell_labels_df.index.get_level_values(0):
+                cell_labels.append(cell_labels_df.loc[cell_i - 1].values[0])
+                cell_imgs.append(img_cell)
+        else:
+            cell_imgs.append(img_cell)
+
+    if cell_labels_df is None:
+        return cell_imgs
+    return cell_imgs, cell_labels
+
+
+# TODO: refactor get_cell_img and get_cells_from_img
+def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-image-classification/train',
+                 base_public_path='../input/publichpa_1024',
+                 trn_cell_boxes_path='../input/cell_bboxes_train',
+                 public_cell_boxes_path='../input/cell_bboxes_public',
+                 cell_img_size=512, aug=None):
+    is_from_train = 'train' in img_base_path
+    cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
+    img_id = os.path.basename(img_base_path)
+    bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
+    bboxes_df = pd.read_pickle(bboxes_path)
+
+    img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
+
+    row = bboxes_df.loc[cell_i + 1]
+    # except:
+    #     print('img_base_path', img_base_path)
+    #     print('bboxes_df', bboxes_df)
+    #     labels_df = pd.read_hdf('../output/image_level_labels.h5')
+    #     print('labels_df', labels_df.loc[img_base_path])
+
+    img_cell = img_rgby[row['y_min']:row['y_max'], row['x_min']:row['x_max'], :].copy()
+    img_cell[row['cell_rows_del'], row['cell_cols_del'], :] = 0
+
+    if aug is not None:
+        img_cell = aug(img_cell)
+    height, width = img_cell.shape[:2]
+
+    if min(height, width) < 0.5 * max(height, width):
+        if height < width:
+            img_cell = np.tile(img_cell, [2, 1, 1, ])
+        else:
+            img_cell = np.tile(img_cell, [1, 2, 1])
+
+    if img_cell.shape[0] > img_cell.shape[1]:
+        diff = img_cell.shape[0] - img_cell.shape[1]
+        left = diff // 2
+        right = diff - left
+        img_cell = cv2.copyMakeBorder(img_cell, 0, 0, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0])
+    else:
+        diff = img_cell.shape[1] - img_cell.shape[0]
+        up = diff // 2
+        down = diff - up
+        img_cell = cv2.copyMakeBorder(img_cell, up, down, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0])
+
+    if cell_img_size is not None:
+        img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+    return img_cell
 
 
 def get_cell_copied(cell_img, augmentations=[], height=1024, width=1024):
@@ -168,7 +264,7 @@ def get_cell_copied(cell_img, augmentations=[], height=1024, width=1024):
 
 
 def open_rgb(image_id,
-              folder_root='../input/hpa-single-cell-image-classification/train'):  # a function that reads RGB image
+             folder_root='../input/hpa-single-cell-image-classification/train'):  # a function that reads RGB image
     colors = ['red', 'green', 'blue']
     img = [cv2.imread(f'{folder_root}/{image_id}_{color}.png', cv2.IMREAD_GRAYSCALE)
            for color in colors]
@@ -218,32 +314,32 @@ def get_new_class_name_indices_in_prev_comp_data():
     27.  Rods & rings  """
 
     class_name_2_new_idx = {"Nucleoplasm": 0,
-    "Nuclear membrane": 1,
-    "Nucleoli": 2,
-    "Nucleoli fibrillar center": 3,
-    "Nuclear speckles": 4,
-    "Nuclear bodies": 5,
-    "Endoplasmic reticulum": 6,
-    "Golgi apparatus": 7,
-    "Intermediate filaments": 8,
-    "Actin filaments": 9,
-    "Focal adhesion sites": 9,
-    "Microtubules": 10,
-    "Mitotic spindle": 11,
-    "Centrosome": 12,
-    "Centriolar satellite": 12,
-    "Plasma membrane": 13,
-    "Cell Junctions": 13,
-    "Mitochondria": 14,
-    "Aggresome": 15,
-    "Cytosol": 16,
-    "Vesicles": 17,
-    "Peroxisomes": 17,
-    "Endosomes": 17,
-    "Lysosomes": 17,
-    "Lipid droplets": 17,
-    "Cytoplasmic bodies": 17,
-    "No staining": 18}
+                            "Nuclear membrane": 1,
+                            "Nucleoli": 2,
+                            "Nucleoli fibrillar center": 3,
+                            "Nuclear speckles": 4,
+                            "Nuclear bodies": 5,
+                            "Endoplasmic reticulum": 6,
+                            "Golgi apparatus": 7,
+                            "Intermediate filaments": 8,
+                            "Actin filaments": 9,
+                            "Focal adhesion sites": 9,
+                            "Microtubules": 10,
+                            "Mitotic spindle": 11,
+                            "Centrosome": 12,
+                            "Centriolar satellite": 12,
+                            "Plasma membrane": 13,
+                            "Cell Junctions": 13,
+                            "Mitochondria": 14,
+                            "Aggresome": 15,
+                            "Cytosol": 16,
+                            "Vesicles": 17,
+                            "Peroxisomes": 17,
+                            "Endosomes": 17,
+                            "Lysosomes": 17,
+                            "Lipid droplets": 17,
+                            "Cytoplasmic bodies": 17,
+                            "No staining": 18}
 
     old_comp_class_names = [class_name.split('. ')[1].strip() for class_name in
                             old_comp_specified_class_names.split('\n')]
@@ -253,3 +349,24 @@ def get_new_class_name_indices_in_prev_comp_data():
         if class_name_new in old_comp_class_names:
             new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
     return list(new_name_index_2_old_name_index.keys())
+
+
+def get_cell_img_with_mask(img_id, cell_i, is_public_data, return_mask=True, target_img_size=1024):
+    img_rgby = open_rgby(img_id,
+                         folder_root='../input/publichpa_1024/' if is_public_data else '../input/hpa-single-cell-image-classification/train')
+    scale_factor = target_img_size / img_rgby.shape[0]
+    bboxes_path_root = '../input/cell_bboxes_public' if is_public_data else '../input/cell_bboxes_train'
+    bboxes_path = os.path.join(bboxes_path_root, f'{img_id}.pkl')
+    bboxes_df = pd.read_pickle(bboxes_path)
+
+    cell_bbox = bboxes_df.loc[cell_i]
+
+    img_ = img_rgby[cell_bbox['y_min']:cell_bbox['y_max'], cell_bbox['x_min']:cell_bbox['x_max'], :]
+    img_[cell_bbox['cell_rows_del'], cell_bbox['cell_cols_del'], :] = 0
+    required_shape = (int(img_.shape[1] * scale_factor), int(img_.shape[0] * scale_factor))
+    img_ = cv2.resize(img_, required_shape)
+    if not return_mask:
+        return img_
+
+    cell_mask = img_.mean(axis=-1) > 5
+    return img_, cell_mask.astype('uint8')

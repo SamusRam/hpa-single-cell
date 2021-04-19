@@ -14,6 +14,7 @@ from hpacellseg.utils import label_cell, label_nuclei
 import warnings
 warnings.simplefilter("ignore")
 import logging
+import pickle
 from tqdm.auto import tqdm
 
 from ..data.datasets import ProteinMLDatasetModified
@@ -41,7 +42,7 @@ BATCH_SIZE = 2
 NUM_CORES = multiprocessing.cpu_count()
 PUBLIC_DATA_FLAG = args.public_data
 PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
-OUTPUT_PATH = '../input/cell_bboxes_public' if PUBLIC_DATA_FLAG else '../input/cell_bboxes_train'
+OUTPUT_PATH = '../input/cell_bboxes_public_minmax' if PUBLIC_DATA_FLAG else '../input/cell_bboxes_train_minmax'
 IMGS_FOLDER = '../input/publichpa_1024' if PUBLIC_DATA_FLAG else '../input/hpa-single-cell-image-classification/train'
 
 if not os.path.exists(OUTPUT_PATH):
@@ -85,15 +86,21 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
 
     if args.repair_zero_sized_masks:
         img_ids = []
-        for file_name in tqdm(os.listdir(OUTPUT_PATH), desc='checking masks to repair..'):
-            bboxes_path = os.path.join(OUTPUT_PATH, file_name)
-            bboxes_df = pd.read_pickle(bboxes_path)
-            for _, row in bboxes_df.iterrows():
-                height = row['y_max'] - row['y_min']
-                width = row['x_max'] - row['x_min']
-                if min(height, width) == 0:
-                    img_ids.append(file_name.replace('.pkl', ''))
+        # for file_name in tqdm(os.listdir(OUTPUT_PATH), desc='checking masks to repair..'):
+        #     bboxes_path = os.path.join(OUTPUT_PATH, file_name)
+        #     bboxes_df = pd.read_pickle(bboxes_path)
+        #     for _, row in bboxes_df.iterrows():
+        #         height = row['y_max'] - row['y_min']
+        #         width = row['x_max'] - row['x_min']
+        #         if min(height, width) <= 1:
+        #             img_ids.append(file_name.replace('.pkl', ''))
+
+        with open('../output/bbox_pred_inconsistent_basepaths.pkl', 'rb') as f:
+            img_ids = set([os.path.basename(x) for x in pickle.load(f)])
+
         img_ids = list(set(img_ids))
+        with open(f'../output/repaired_ids{"_public" if PUBLIC_DATA_FLAG else ""}.pkl', 'wb') as f:
+            pickle.dump(img_ids, f)
         print(len(img_ids))
     else:
         img_ids = [img_id for img_id in img_ids if not os.path.exists(os.path.join(OUTPUT_PATH, f'{img_id}.pkl'))]
@@ -110,6 +117,8 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
     def get_mask_index(cell_bool_mask, masks_all):
         cell_rows, cell_cols = np.where(cell_bool_mask)
         try:
+            # y_min, y_max = min(cell_rows), max(cell_rows)
+            # x_min, x_max = min(cell_cols), max(cell_cols)
             y_min, y_max = [int(i) for i in np.quantile(cell_rows, [0.01, 0.99])]
             x_min, x_max = [int(i) for i in np.quantile(cell_cols, [0.01, 0.99])]
         except TypeError:
@@ -159,7 +168,7 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
                 [x_min, y_min], [x_max, y_max], cell_rows_del, cell_cols_del = get_mask_index(cell_mask_bool, masks_all)
                 rows_list.append(cell_rows_del.astype(np.int16))
                 cols_list.append(cell_cols_del.astype(np.int16))
-                cell_i_list.append(np.int8(cell_i))
+                cell_i_list.append(np.int16(cell_i))
                 x_min_list.append(np.int16(x_min))
                 y_min_list.append(np.int16(y_min))
                 x_max_list.append(np.int16(x_max))
@@ -170,6 +179,7 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
                                        'cell_rows_del': rows_list, 'cell_cols_del': cols_list,
                                        'cell_i': cell_i_list
                                        })
+            results_df.set_index('cell_i', inplace=True)
             results_df.to_pickle(pickle_path)
 
 

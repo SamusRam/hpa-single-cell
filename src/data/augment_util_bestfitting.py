@@ -1,4 +1,12 @@
 from src.commons.config.config_bestfitting import *
+from albumentations import Rotate
+
+rot = Rotate(always_apply=True)
+
+
+def augment_rot(image):
+    augmented = rot(image=image)
+    return augmented['image']
 
 
 def train_multi_augment2(image):
@@ -11,10 +19,12 @@ def train_multi_augment2(image):
         augment_flipud_transpose,          # up-down transpose
         augment_fliplr_transpose,          # left-right transpose
         augment_flipud_lr_transpose,       # up-down left-right transpose
+        augment_rot
     ]
     c = np.random.choice(len(augment_func_list))
     image = augment_func_list[c](image)
     return image
+
 
 def augment_default(image, mask=None):
     if mask is None:

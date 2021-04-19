@@ -11,6 +11,13 @@ seed(10)
 import numpy as np
 from torch.utils.data.sampler import Sampler
 from random import sample, shuffle
+from .utils import get_cells_from_img, get_cell_img, get_cell_img_with_mask
+from multiprocessing import Pool, cpu_count
+import pandas as pd
+from sklearn.metrics import normalized_mutual_info_score
+from torchvision import transforms
+from random import choices
+import albumentations as A
 
 
 class DataGeneneratorRGB(Sequence):
@@ -158,8 +165,8 @@ class ProteinMLDatasetModified(Dataset):
 
     def __len__(self):
         return self.num
-    
-    
+
+
 class ProteinDatasetImageLevel(Dataset):
     def __init__(self,
                  img_paths,
@@ -171,7 +178,14 @@ class ProteinDatasetImageLevel(Dataset):
                  in_channels=4,
                  crop_size=0,
                  random_crop=False,
+                 cherrypicked_mitotic_spindle_df=None,
+                 cherrypicked_aggresome_df=None,
+                 mitotic_img_prob=None,
+                 max_num_mitotic_cells_per_img=None,
+                 aggresome_img_prob=None,
+                 max_num_aggresome_cells_per_img=None
                  ):
+
         self.is_trainset = is_trainset
         self.img_size = img_size
         self.return_label = return_label
@@ -184,23 +198,148 @@ class ProteinDatasetImageLevel(Dataset):
         if is_trainset:
             self.basepath_2_ohe = basepath_2_ohe
 
-        self.num = len(self.img_paths)
+        self.mitotic_aggresome_balancing = cherrypicked_aggresome_df is not None
+        if self.mitotic_aggresome_balancing:
+            assert cherrypicked_mitotic_spindle_df is not None, 'when balancing minor classes, both Aggresome and Mitotic must be included'
+            self.cherrypicked_aggresome_df = cherrypicked_aggresome_df
+            self.cherrypicked_mitotic_spindle_df = cherrypicked_mitotic_spindle_df
 
-    def read_rgby(self, img_path):
+            self.minority_aug = A.Compose([
+                A.HorizontalFlip(p=0.7),
+                A.VerticalFlip(p=0.7),
+                A.RandomRotate90(p=0.5),
+                A.ShiftScaleRotate(p=0.8, rotate_limit=0),
+                A.GaussianBlur(p=0.2)])
+            self.indices_of_mitotic_cells = list(range(len(cherrypicked_mitotic_spindle_df)))
+            self.indices_of_aggresome_cells = list(range(len(cherrypicked_aggresome_df)))
+            self.mitotic_img_prob = 0.1 if mitotic_img_prob is None else mitotic_img_prob
+            self.aggresome_img_prob = 0.1 if aggresome_img_prob is None else aggresome_img_prob
+            self.max_num_mitotic_cells_per_img = 4 if max_num_mitotic_cells_per_img is None else max_num_mitotic_cells_per_img
+            self.max_num_aggresome_cells_per_img = 4 if max_num_aggresome_cells_per_img is None else max_num_aggresome_cells_per_img
+
+            self.img_paths_len = len(self.img_paths)
+            self.num = self.img_paths_len
+        else:
+            self.num = len(self.img_paths)
+
+    def copy_paste_augment(self, img_rgby, is_aggresome):
+        selected_cells_df = self.cherrypicked_aggresome_df if is_aggresome else self.cherrypicked_mitotic_spindle_df
+        indices_of_selected_cells = self.indices_of_aggresome_cells if is_aggresome else self.indices_of_mitotic_cells
+        max_num_cells_per_img = self.max_num_aggresome_cells_per_img if is_aggresome else self.max_num_mitotic_cells_per_img
+
+        number_of_added_cells = np.random.randint(max(1, max_num_cells_per_img // 2), max_num_cells_per_img)
+        img_rgby_height, img_rgby_width = img_rgby.shape[:2]
+
+        sampling_weights = selected_cells_df['sampling_weight']
+        ohes = []
+        for mitotic_cell_idx in choices(indices_of_selected_cells, weights=sampling_weights, k=number_of_added_cells):
+            cell_img, cell_mask = get_cell_img_with_mask(selected_cells_df['ID'].iloc[mitotic_cell_idx],
+                                                         selected_cells_df['cell_i'].iloc[mitotic_cell_idx],
+                                                         selected_cells_df['is_public'].iloc[mitotic_cell_idx])
+
+            augmented = self.minority_aug(image=cell_img, mask=cell_mask)
+
+            cell_img = augmented['image']
+            cell_mask = augmented['mask']
+
+            cell_rows, cell_cols = np.where(cell_mask)
+            cell_img_height, cell_img_width = cell_mask.shape
+            x_insert = np.random.randint(0, img_rgby_width - cell_img_width)
+            y_insert = np.random.randint(0, img_rgby_height - cell_img_height)
+
+            img_cell_rows = cell_rows + y_insert
+            img_cell_cols = cell_cols + x_insert
+
+            img_rgby[img_cell_rows, img_cell_cols] = cell_img[cell_rows, cell_cols]
+
+            ohes.append(selected_cells_df['ohe'].iloc[mitotic_cell_idx])
+        return img_rgby, ohes
+
+    def get_tiled_cell(self, is_aggresome):
+        selected_cells_df = self.cherrypicked_aggresome_df if is_aggresome else self.cherrypicked_mitotic_spindle_df
+        indices_of_selected_cells = self.indices_of_aggresome_cells if is_aggresome else self.indices_of_mitotic_cells
+
+        img_rgby_height, img_rgby_width = self.img_size, self.img_size
+
+        sampling_weights = selected_cells_df['sampling_weight']
+        mitotic_cell_idx = choices(indices_of_selected_cells, weights=sampling_weights, k=1)[0]
+        cell_img = get_cell_img_with_mask(selected_cells_df['ID'].iloc[mitotic_cell_idx],
+                                          selected_cells_df['cell_i'].iloc[mitotic_cell_idx],
+                                          selected_cells_df['is_public'].iloc[mitotic_cell_idx],
+                                          return_mask=False)
+
+
+        cell_img = self.minority_aug(image=cell_img)['image']
+
+        height, width = cell_img.shape[:2]
+
+        cell_img_tiled = np.tile(cell_img, [img_rgby_height // height + 1, img_rgby_width // width + 1, 1])
+        cell_img_tiled = cell_img_tiled[:img_rgby_height, :img_rgby_height, :]
+
+        return cell_img_tiled, selected_cells_df['ohe'].iloc[mitotic_cell_idx]
+
+    def read_rgby(self, index):
         if self.in_channels == 3:
             colors = ['red', 'green', 'blue']
         else:
             colors = ['red', 'green', 'blue', 'yellow']
+        img_path = self.img_paths[index]
 
-        flags = cv2.IMREAD_GRAYSCALE
-        img = [cv2.resize(cv2.imread(f'{img_path}_{color}.png', flags), (self.img_size, self.img_size))
+        img_id = os.path.basename(img_path)
+        img = [cv2.resize(cv2.imread(f'{img_path}_{color}.png', cv2.IMREAD_GRAYSCALE), (self.img_size, self.img_size))
                for color in colors]
-        img = np.stack(img, axis=-1)
-        return img
+        img_rgby = np.stack(img, axis=-1)
+        label = self.basepath_2_ohe[img_path]
+        return img_rgby, label, img_id
+
+    def get_rgby(self, index):
+        if not self.mitotic_aggresome_balancing:
+            return self.read_rgby(index)
+
+        # if index < self.img_paths_len:
+        #     mitotic_aggresome_is_balanced = False
+        #     tiled_minority = False
+        # elif index < 2*self.img_paths_len:
+        #     mitotic_aggresome_is_balanced = True
+        #     tiled_minority = False
+        #     index = index % self.img_paths_len
+        # else:
+        #     raise NotImplementedError('Not supported mitotic-aggresome aug')
+        #     mitotic_aggresome_is_balanced = False
+        #     tiled_minority = True
+
+        # if not tiled_minority:
+        #     img_rgby, label, img_id = self.read_rgby(index)
+        #
+        #     additional_ohes = []
+        #     if mitotic_aggresome_is_balanced:
+        #         if np.random.rand() < self.mitotic_img_prob:
+        #             img_rgby, ohes_of_added = self.copy_paste_augment(img_rgby, is_aggresome=False)
+        #             additional_ohes.extend(ohes_of_added)
+        #         if np.random.rand() < self.aggresome_img_prob:
+        #             img_rgby, ohes_of_added = self.copy_paste_augment(img_rgby, is_aggresome=True)
+        #             additional_ohes.extend(ohes_of_added)
+        #     if len(additional_ohes):
+        #         label = label.copy()
+        #         for additional_ohe in additional_ohes:
+        #             label += additional_ohe
+        #         label = np.minimum(1, label)
+        # else:
+        #     img_id = 'tiled'
+        #     img_rgby, label = self.get_tiled_cell(is_aggresome=np.random.rand() < 0.5)
+
+        if np.random.rand() < self.mitotic_img_prob:
+            img_id = 'tiled'
+            img_rgby, label = self.get_tiled_cell(is_aggresome=False)
+        elif np.random.rand() < self.aggresome_img_prob:
+            img_id = 'tiled'
+            img_rgby, label = self.get_tiled_cell(is_aggresome=True)
+        else:
+            img_rgby, label, img_id = self.read_rgby(index)
+        return img_rgby, label, img_id
 
     def __getitem__(self, index):
-        img_path = self.img_paths[index]
-        image = self.read_rgby(img_path)
+        image, label, img_id = self.get_rgby(index)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -210,9 +349,7 @@ class ProteinDatasetImageLevel(Dataset):
             image = image.transpose((2, 0, 1))
         image = torch.from_numpy(image)
 
-        img_id = os.path.basename(img_path)
         if self.return_label:
-            label = self.basepath_2_ohe[img_path]
             return image, label, img_id
         else:
             return image, img_id
@@ -224,61 +361,29 @@ class ProteinDatasetImageLevel(Dataset):
 class ProteinDatasetCellLevel(Dataset):
     def __init__(self,
                  img_paths,
-                 bboxes_df,
-                 img_id_2_img_id_int,
-                 basepath_2_ohe=None,
-                 img_size=1024,
+                 labels_df=None,
+                 img_size=512,
+                 batch_size=32,
                  transform=None,
                  return_label=True,
                  is_trainset=True,
                  in_channels=4,
-                 crop_size=0,
-                 random_crop=False,
                  ):
         self.is_trainset = is_trainset
         self.img_size = img_size
         self.return_label = return_label
         self.in_channels = in_channels
         self.transform = transform
-        self.crop_size = crop_size
-        self.random_crop = random_crop
+        self.batch_size = batch_size
 
-        self.img_paths = img_paths
+        labeled_paths_set = set(labels_df.index.get_level_values(0))
+        self.img_paths = [img_path for img_path in img_paths if img_path in labeled_paths_set]
 
-        img_id_int_2_img_id = {val: key for key, val in img_id_2_img_id_int.items()}
-        img_id_2_basepath = {os.path.basename(path): path for path in basepath_2_ohe.keys()}
-        img_id_int_2_basepath = {img_id_int: img_id_2_basepath[img_id_int_2_img_id[img_id_int]]
-                                 for img_id_int in img_id_2_img_id_int.values()}
-        img_paths_set = set(img_paths)
-        self.bboxes_df = bboxes_df[bboxes_df['img_id'].map(img_id_int_2_basepath).isin(img_paths_set)]
-        self.num = len(self.bboxes_df)
-        self.img_id_int_2_basepath = img_id_int_2_basepath
+        self.num = len(self.img_paths)
         if is_trainset:
-            self.img_id_int_2_ohe = {img_id_int: basepath_2_ohe[img_id_int_2_basepath[img_id_int]]
-                                     for img_id_int in img_id_int_2_basepath.keys()}
+            self.labels_df = labels_df
 
-    def read_rgby(self, img_path):
-        if self.in_channels == 3:
-            colors = ['red', 'green', 'blue']
-        else:
-            colors = ['red', 'green', 'blue', 'yellow']
-
-        flags = cv2.IMREAD_GRAYSCALE
-        img = [cv2.imread(f'{img_path}_{color}.png', flags)
-               for color in colors]
-        img = np.stack(img, axis=-1)
-        return img
-
-    def get_cell_img(self, cell_df_row):
-        img = self.read_rgby(self.img_id_int_2_basepath[cell_df_row['img_id']])
-        img_cell = img[cell_df_row['y_min']:cell_df_row['y_max'], cell_df_row['x_min']:cell_df_row['x_max'], :].copy()
-        img_cell[cell_df_row['cell_rows_del'], cell_df_row['cell_cols_del'], :] = 0
-        return img_cell
-
-    def __getitem__(self, index):
-        cell_df_row = self.bboxes_df.iloc[index]
-        image = self.get_cell_img(cell_df_row)
-
+    def preprocess_image(self, image):
         if self.transform is not None:
             image = self.transform(image)
         image = image / 255.0
@@ -286,12 +391,124 @@ class ProteinDatasetCellLevel(Dataset):
         if len(image.shape) == 3:
             image = image.transpose((2, 0, 1))
         image = torch.from_numpy(image)
+        return image
 
-        if self.return_label:
-            label = self.img_id_int_2_ohe[cell_df_row['img_id']]
-            return image, label, index
+    def __getitem__(self, index):
+        img_basepath = self.img_paths[index]
+        if self.is_trainset:
+            cell_labels_df = self.labels_df.loc[img_basepath]
+            cell_imgs, cell_labels = get_cells_from_img(img_basepath,
+                                                        cell_img_size=self.img_size, return_raw=False,
+                                                        sample_size=self.batch_size, cell_labels_df=cell_labels_df)
+            cell_labels_np = np.stack(cell_labels)
         else:
-            return image, index
+            cell_imgs = get_cells_from_img(img_basepath,
+                                           cell_img_size=self.img_size, return_raw=False,
+                                           sample_size=self.batch_size)
+
+        cell_imgs = [self.preprocess_image(img) for img in cell_imgs]
+        cell_imgs_np = np.stack(cell_imgs)
+
+        if self.is_trainset:
+            return cell_imgs_np, cell_labels_np, index
+        return cell_imgs_np, index
+
+    def __len__(self):
+        return self.num
+
+
+def img_nmi_avg_parellel(preds_all):
+    img_path = preds_all.index[0][0]
+    preds_all = preds_all.values
+    nmis_pairwise = []
+    for i in range(len(preds_all)):
+        for j in range(i + 1, len(preds_all)):
+            nmi_ = (normalized_mutual_info_score(preds_all[j][0],
+                                                 preds_all[i][0]) + normalized_mutual_info_score(
+                preds_all[i][0], preds_all[j][0])) / 2
+            nmis_pairwise.append(nmi_)
+    return pd.DataFrame({'img_path': [img_path], 'similarity': [np.nanmean(nmis_pairwise)]})
+
+
+def applyParallel(dfGrouped, func):
+    with Pool(cpu_count() // 2) as p:
+        ret_list = p.map(func, [group for name, group in dfGrouped])
+    return pd.concat(ret_list)
+
+
+class ProteinDatasetCellSeparateLoading(Dataset):
+    def __init__(self,
+                 img_paths,
+                 labels_df=None,
+                 img_size=512,
+                 transform=None,
+                 return_label=True,
+                 in_channels=4,
+                 hard_data_subsample=None,
+                 int_labels=False,
+                 image_level_labels=False,
+                 basepath_2_ohe=None,
+                 normalize=False
+                 ):
+        self.img_size = img_size
+        self.return_label = return_label
+        self.in_channels = in_channels
+        self.transform = transform
+
+        labeled_paths_set = set(labels_df.index.get_level_values(0))
+        img_paths = [img_path for img_path in img_paths if img_path in labeled_paths_set]
+
+        labels_df = labels_df.loc[img_paths]
+
+        if hard_data_subsample is not None:
+            df_proxy_variability = applyParallel(labels_df.groupby(level=0), img_nmi_avg_parellel)
+
+            num_samples = int(np.ceil(hard_data_subsample * len(df_proxy_variability)))
+
+            hard_paths = set(df_proxy_variability.sort_values(by='similarity')['img_path'].values[:num_samples])
+            labeled_paths_all = [path for path in labels_df.index.get_level_values(0) if path not in hard_paths]
+            # adding random sample out of other imgs not to focus on potentially weird imgs with low similarity only
+            labeled_paths_all = sample(labeled_paths_all, max(1, num_samples)) + list(hard_paths)
+            labels_df = labels_df.loc[set(labeled_paths_all)]
+
+        self.num = len(labels_df)
+        self.labels_df = labels_df
+        self.int_labels = int_labels
+        self.basepath_cell = labels_df.index.values
+        self.image_level_labels = image_level_labels
+        self.basepath_2_ohe_vector = basepath_2_ohe
+        self.normalize = normalize
+        if self.normalize:
+            self.normalization = transforms.Normalize(mean=[0.485, 0.456, 0.406, 0.406],
+                                                      std=[0.229, 0.224, 0.225, 0.225])
+
+    def preprocess_image(self, image):
+        image = image / 255.0
+        if len(image.shape) == 3:
+            image = image.transpose((2, 0, 1))
+        image = torch.from_numpy(image.astype(np.float32))
+        if self.normalize:
+            image = self.normalization(image)
+        return image
+
+    def __getitem__(self, index):
+        img_basepath, cell_i = self.basepath_cell[index]
+        if self.image_level_labels:
+            y = self.basepath_2_ohe_vector[img_basepath]
+        else:
+            y_raw = self.labels_df.loc[(img_basepath, cell_i), 'image_level_pred']
+            if self.int_labels:
+                random_numbers = np.random.uniform(size=len(y_raw))
+                y = np.zeros_like(y_raw)
+                y[random_numbers < y_raw] = 1
+            else:
+                y = y_raw
+
+        cell_img = get_cell_img(img_basepath, cell_i, aug=self.transform)
+
+        cell_img = self.preprocess_image(cell_img)
+
+        return cell_img, y, index
 
     def __len__(self):
         return self.num
