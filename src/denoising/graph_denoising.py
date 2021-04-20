@@ -20,7 +20,6 @@ from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names, g
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--fold", type=int, default=0)
 parser.add_argument("--num-cores", type=int, default=multiprocessing.cpu_count()//5)
 parser.add_argument("--num-graph-neighbours", type=int, default=200)
 parser.add_argument("--num-eigenvectors", type=int, default=50)
@@ -44,11 +43,11 @@ logger = logging.getLogger(
 )
 
 #############################
-train_df = get_train_df_ohe()
+train_df = get_train_df_ohe(clean_from_duplicates=True, clean_mitotic=True, clean_aggresome=True)
 img_paths_train = list(train_df['img_base_path'].values)
 trn_basepath_2_ohe_vector = {img: vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
-public_hpa_df = get_public_df_ohe()
+public_hpa_df = get_public_df_ohe(clean_from_duplicates=True, clean_mitotic=True, clean_aggresome=True)
 public_basepath_2_ohe_vector = {img_path: vec for img_path, vec in
                                 zip(public_hpa_df['img_base_path'], public_hpa_df.iloc[:, 2:].values)}
 

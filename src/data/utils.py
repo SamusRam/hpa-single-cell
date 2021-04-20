@@ -135,15 +135,20 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
                        base_public_path='../input/publichpa_1024',
                        trn_cell_boxes_path='../input/cell_bboxes_train',
                        public_cell_boxes_path='../input/cell_bboxes_public',
-                       cell_img_size=512, return_raw=False, sample_size=None, cell_labels_df=None):
+                       cell_img_size=512, return_raw=False, sample_size=None, cell_labels_df=None,
+                       target_img_size=None):
+    assert not return_raw or target_img_size is not None, 'when returning_raw target_img_size must be specified'
+
     is_from_train = 'train' in img_base_path
     cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
     img_id = os.path.basename(img_base_path)
     bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
     bboxes_df = pd.read_pickle(bboxes_path)
-    print('bboxes_df len', len(bboxes_df))
 
     img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
+
+    if return_raw:
+        scale_factor = target_img_size / img_rgby.shape[0]
 
     cell_imgs = []
     if cell_labels_df is not None:
@@ -155,16 +160,17 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
         iterator = bboxes_df.iterrows()
 
     for cell_i, row in iterator:
-        height = row['y_max'] - row['y_min']
-        width = row['x_max'] - row['x_min']
-
         img_cell = img_rgby[row['y_min']:row['y_max'], row['x_min']:row['x_max'], :].copy()
         img_cell[row['cell_rows_del'], row['cell_cols_del'], :] = 0
 
         if return_raw:
-            cell_imgs.append(img_cell)
+            required_shape = (int(img_cell.shape[1] * scale_factor), int(img_cell.shape[0] * scale_factor))
+            img_cell = cv2.resize(img_cell, required_shape)
+            yield img_cell
             continue
 
+        height = row['y_max'] - row['y_min']
+        width = row['x_max'] - row['x_min']
         if min(height, width) < 0.5 * max(height, width):
             if height < width:
                 img_cell = np.tile(img_cell, [2, 1, 1, ])
@@ -187,17 +193,19 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
 
         if cell_labels_df is not None:
             if cell_i - 1 in cell_labels_df.index.get_level_values(0):
-                cell_labels.append(cell_labels_df.loc[cell_i - 1].values[0])
-                cell_imgs.append(img_cell)
+                yield img_cell, cell_labels_df.loc[cell_i - 1].values[0]
+                # cell_labels.append(cell_labels_df.loc[cell_i - 1].values[0])
+                # cell_imgs.append(img_cell)
         else:
-            cell_imgs.append(img_cell)
+            yield img_cell
+            # cell_imgs.append(img_cell)
 
-    if cell_labels_df is None:
-        return cell_imgs
-    return cell_imgs, cell_labels
+    # if cell_labels_df is None:
+    #     return cell_imgs
+    # return cell_imgs, cell_labels
 
 
-# TODO: refactor get_cell_img and get_cells_from_img
+# TODO: refactor get_cell_img, get_cells_from_img, get_cell_img_with_mask
 def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-image-classification/train',
                  base_public_path='../input/publichpa_1024',
                  trn_cell_boxes_path='../input/cell_bboxes_train',
@@ -248,6 +256,7 @@ def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-
 
 
 def get_cell_copied(cell_img, augmentations=[], height=1024, width=1024):
+    cell_img = cell_img/255.
     cell_height, cell_width = cell_img.shape[:2]
     cell_img_tiled = np.tile(cell_img, [height // cell_height + 1, width // cell_width + 1, 1])
     cell_img_tiled = cell_img_tiled[:height, :width, :]

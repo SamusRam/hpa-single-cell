@@ -42,7 +42,7 @@ BATCH_SIZE = 2
 NUM_CORES = multiprocessing.cpu_count()
 PUBLIC_DATA_FLAG = args.public_data
 PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
-OUTPUT_PATH = '../input/cell_bboxes_public_minmax' if PUBLIC_DATA_FLAG else '../input/cell_bboxes_train_minmax'
+OUTPUT_PATH = '../input/cell_bboxes_public' if PUBLIC_DATA_FLAG else '../input/cell_bboxes_train'
 IMGS_FOLDER = '../input/publichpa_1024' if PUBLIC_DATA_FLAG else '../input/hpa-single-cell-image-classification/train'
 
 if not os.path.exists(OUTPUT_PATH):
@@ -117,10 +117,10 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
     def get_mask_index(cell_bool_mask, masks_all):
         cell_rows, cell_cols = np.where(cell_bool_mask)
         try:
-            # y_min, y_max = min(cell_rows), max(cell_rows)
-            # x_min, x_max = min(cell_cols), max(cell_cols)
-            y_min, y_max = [int(i) for i in np.quantile(cell_rows, [0.01, 0.99])]
-            x_min, x_max = [int(i) for i in np.quantile(cell_cols, [0.01, 0.99])]
+            y_min, y_max = min(cell_rows), max(cell_rows)
+            x_min, x_max = min(cell_cols), max(cell_cols)
+            # y_min, y_max = [int(i) for i in np.quantile(cell_rows, [0.01, 0.99])]
+            # x_min, x_max = [int(i) for i in np.quantile(cell_cols, [0.01, 0.99])]
         except TypeError:
             y_min = np.min(cell_rows)
             y_max = np.max(cell_rows)

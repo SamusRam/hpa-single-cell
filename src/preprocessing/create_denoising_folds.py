@@ -9,14 +9,18 @@ warnings.simplefilter("ignore")
 
 from ..data.utils import get_public_df_ohe, get_train_df_ohe
 
-N_FOLDS = 5
+N_FOLDS = 3
 
-train_df = get_train_df_ohe()
+train_df = get_train_df_ohe(clean_from_duplicates=True,
+                            clean_mitotic=True,
+                            clean_aggresome=True)
 img_paths_train = list(train_df['img_base_path'].values)
 basepath_2_ohe_vector = {img:vec for img, vec in zip(train_df['img_base_path'], train_df.iloc[:, 2:].values)}
 
 
-public_hpa_df_17 = get_public_df_ohe()
+public_hpa_df_17 = get_public_df_ohe(clean_from_duplicates=True,
+                                     clean_mitotic=True,
+                                     clean_aggresome=True)
 public_basepath_2_ohe_vector = {img_path:vec for img_path, vec in zip(public_hpa_df_17['img_base_path'],
                                                             public_hpa_df_17.iloc[:, 2:].values)}
 
@@ -40,7 +44,17 @@ with open('../input/all_negs_public.pkl', 'rb') as f:
     all_negs_public = set(pickle.load(f))
 
 
-def get_id_2_masks(precomputed_mask_path, all_negs):
+def get_id_2_masks(basepath_2_ohe_vector, all_negs_trn, all_negs_public, trn_cell_boxes_path='../input/cell_bboxes_train',
+                       public_cell_boxes_path='../input/cell_bboxes_public'):
+
+    for img_base_path in basepath_2_ohe_vector.keys():
+        is_from_train = 'train' in img_base_path
+        cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
+        img_id = os.path.basename(img_base_path)
+        bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
+        all_negs = all_negs_trn if is_from_train else all_negs_public
+
+
     available_files = os.listdir(precomputed_mask_path)
     id_2_mask_indices = dict()
     for file_name in tqdm(available_files, desc=f'Generating id_2_masks mapping for {precomputed_mask_path}'):

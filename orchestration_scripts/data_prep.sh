@@ -1,8 +1,4 @@
 #!/bin/bash
-#python -m src.preprocessing.detect_masks_without_staining
-#python -m src.preprocessing.detect_masks_without_staining --public-data
-#python -m src.preprocessing.detect_negatives_with_staining
-#python -m src.preprocessing.detect_negatives_with_staining --public-data
 #python -m src.preprocessing.detect_negatives_with_obvious_staining
 #python -m src.preprocessing.detect_negatives_with_obvious_staining --public-data
 #python -m src.preprocessing.create_imagelevel_folds

@@ -27,7 +27,6 @@ parser.add_argument('--img_size', default=1024, type=int, help='image size (defa
 parser.add_argument('--batch_size', default=8, type=int, help='train mini-batch size (default: 32)')
 parser.add_argument('--workers', default=multiprocessing.cpu_count() - 1, type=int, help='number of data loading workers (default: 3)')
 parser.add_argument('--num-folds', default=5, type=int)
-parser.add_argument('--ignore-negs', action='store_true')
 parser.add_argument('--output-path', default='../output/image_level_labels_repaired_REPLACE.h5')
 parser.add_argument('--fold-single', default=None, type=int)
 
@@ -93,14 +92,13 @@ def main():
 
     for fold in folds_list:
         _, val_img_paths = folds[fold]
+        # val_img_paths = ['../input/hpa-single-cell-image-classification/train/0032a07e-bba9-11e8-b2ba-ac1f6b6435d0']
 
         # val_img_paths = [x for x in val_img_paths if os.path.basename(x) in img_ids_problematic]
         #
         # print('val_img_paths', val_img_paths)
 
         train_df = get_train_df_ohe(clean_from_duplicates=True)
-        if args.ignore_negs:
-            train_df['Negative'] = 0
         public_df = get_public_df_ohe(clean_from_duplicates=True)
 
         available_paths = set(np.concatenate((train_df['img_base_path'].values, public_df['img_base_path'].values)))
@@ -108,11 +106,21 @@ def main():
 
         for base_path in tqdm(fold_img_paths, desc=f'Processing fold {fold}'):
             cell_2_predictions_list = []
-            cell_imgs = get_cells_from_img(base_path, return_raw=True)
-            print('cell_imgs len', len(cell_imgs))
+            # cell_imgs = get_cells_from_img(base_path, return_raw=True, target_img_size=1024)
             cell_images_tiled_all = []
-            for cell_img in cell_imgs:
+
+            # cell_i = 0
+            # for cell_img in cell_imgs:
+            for cell_img in get_cells_from_img(base_path, return_raw=True, target_img_size=1024):
                 cell_images_tiled_all.extend(get_cell_copied(cell_img, augmentations=[vert_flip, hor_flip, rot]))
+                # import matplotlib.pyplot as plt
+                # if cell_i  + 1 == 14:
+                # for i in range(4, 5):
+                #     plt.figure(figsize=(10, 10))
+                #     plt.imshow(cell_images_tiled_all[-i][:, :, :3])
+                #     plt.savefig(f'{cell_i}_{i}.png')
+                # cell_i += 1
+
 
             for batch_i in range(len(cell_images_tiled_all)//batch_size + (1 if len(cell_images_tiled_all)%batch_size != 0 else 0)):
                 classifier_batch_next = cell_images_tiled_all[batch_i*batch_size: (batch_i + 1)*batch_size]
@@ -131,12 +139,10 @@ def main():
             if len(cell_2_predictions_list) == 0: continue
             cell_2_predictions_np = np.concatenate(cell_2_predictions_list) if len(cell_2_predictions_list) > 1 else cell_2_predictions_list[0]
 
-            print('cell_2_predictions_np len', len(cell_2_predictions_np))
-
-
             img_basepaths_list.extend([base_path for _ in range(len(cell_2_predictions_np))])
             img_cell_num_list.extend(list(range(len(cell_2_predictions_np))))
             label_probs_list.extend([pred_vec for pred_vec in cell_2_predictions_np])
+            # print(cell_2_predictions_np.shape, cell_2_predictions_np[13][15], cell_2_predictions_np[14][15])
 
     image_level_labels_df = pd.DataFrame({'img_basepath': img_basepaths_list,
                                           'img_cell_number': img_cell_num_list,
