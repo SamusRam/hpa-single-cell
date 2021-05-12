@@ -4,7 +4,7 @@ sys.path.insert(0, '..')
 import argparse
 import shutil
 import pickle
-
+from random import sample
 import torch
 import torch.optim
 from torch.utils.data import DataLoader
@@ -15,18 +15,21 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from sklearn.metrics import average_precision_score
 import pandas as pd
+from sklearn.metrics import precision_recall_curve, auc
+from torch.nn import BCELoss
 
 from ..data.augment_util_bestfitting import train_multi_augment2
 from ..models.layers_bestfitting.loss import *
 from ..models.layers_bestfitting.scheduler import *
 from ..models.networks_bestfitting.imageclsnet import init_network
-from ..data.datasets import ProteinDatasetCellSeparateLoading #ProteinDatasetCellLevel
+from ..data.datasets import ProteinDatasetCellSeparateLoading, \
+    ProteinMitoticDatasetCellSeparateLoading, MitoticBalancingSubSampler  # ProteinDatasetCellLevel
 from ..data.utils import get_train_df_ohe, get_public_df_ohe, get_class_names
 from src.commons.utils import Logger
 import multiprocessing
 import time
 
-loss_names = ['FocalSymmetricHardLogLoss', 'SoftFocalSymmetricHardLogLoss', 'FocalSymmetricLovaszHardLogLoss']
+loss_names = ['BCELoss']
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
 parser.add_argument('--out_dir', default='densenet121_1024_all_data_obvious_neg', type=str, help='destination where trained network should be saved')
@@ -37,8 +40,8 @@ parser.add_argument('--effnet-encoder', default='efficientnet-b0', type=str)
 
 parser.add_argument('--num_classes', default=19, type=int, help='number of classes (default: 19)')
 parser.add_argument('--in_channels', default=4, type=int, help='in channels (default: 4)')
-parser.add_argument('--loss', default='SoftCEHardLogLoss', choices=loss_names, type=str,
-                    help='loss function: ' + ' | '.join(loss_names) + ' (deafault: SoftCEHardLogLoss)')
+parser.add_argument('--loss', default='BCELoss', choices=loss_names, type=str,
+                    help='loss function: ' + ' | '.join(loss_names) + ' (deafault: BCELoss)')
 parser.add_argument('--scheduler', default='Adam20WarmUP', type=str, help='scheduler name')
 parser.add_argument('--scheduler-lr-multiplier', default=1.0, type=float, help='scheduler lr multiplier')
 parser.add_argument('--scheduler-epoch-offset', default=0, type=int, help='epoch offset for the scheduler')
@@ -60,6 +63,7 @@ parser.add_argument('--target-raw-img-size', default=None, type=int)
 parser.add_argument('--include-nn-mitotic', action='store_true')
 parser.add_argument('--upsample-minorities', action='store_true')
 parser.add_argument('--all-gpus', action='store_true')
+parser.add_argument('--load-as-is', action='store_true')
 
 def main():
     args = parser.parse_args()
@@ -88,7 +92,7 @@ def main():
 
     model_params = {}
     model_params['architecture'] = args.arch
-    model_params['num_classes'] = args.num_classes
+    model_params['num_classes'] = 1
     model_params['in_channels'] = args.in_channels
     if 'efficientnet' in args.arch:
         model_params['image_size'] = args.img_size
@@ -103,7 +107,14 @@ def main():
         else:
             pretrained_ckpt_path = args.load_state_dict_path
         init_pretrained = torch.load(pretrained_ckpt_path)
-        model.load_state_dict(init_pretrained['state_dict'])
+        if args.load_as_is:
+            model.load_state_dict(init_pretrained['state_dict'])
+        else:
+            model.load_state_dict({key: (val if key not in {'logit.weight', 'logit.bias'}
+                                         else torch.rand([1, 1024] if key == 'logit.weight' else [1]))
+                                   for key, val in init_pretrained['state_dict'].items()
+                                   })
+            torch.nn.init.xavier_uniform(model.logit.weight)
 
     if args.all_gpus:
         model = DataParallel(model)
@@ -118,7 +129,7 @@ def main():
     start_epoch = 0
     best_loss = 1e5
     best_epoch = 0
-    best_focal = float('inf')
+    best_val_pr_auc_score = 0
 
     # define scheduler
     try:
@@ -128,26 +139,7 @@ def main():
         raise (RuntimeError("Scheduler {} not available!".format(args.scheduler)))
     optimizer = scheduler.schedule(model, start_epoch, args.epochs)[0]
 
-    # optionally resume from a checkpoint
-    if args.resume:
-        args.resume = os.path.join(model_out_dir, args.resume)
-        if os.path.isfile(args.resume):
-            # load checkpoint weights and update model and optimizer
-            log.write(">> Loading checkpoint:\n>> '{}'\n".format(args.resume))
 
-            checkpoint = torch.load(args.resume)
-            start_epoch = checkpoint['epoch']
-            best_epoch = checkpoint['best_epoch']
-            best_focal = checkpoint['best_map']
-            model.load_state_dict(checkpoint['state_dict'])
-
-            optimizer_fpath = args.resume.replace('.pth', '_optim.pth')
-            if os.path.exists(optimizer_fpath):
-                log.write(">> Loading checkpoint:\n>> '{}'\n".format(optimizer_fpath))
-                optimizer.load_state_dict(torch.load(optimizer_fpath)['optimizer'])
-            log.write(">>>> loaded checkpoint:\n>>>> '{}' (epoch {})\n".format(args.resume, checkpoint['epoch']))
-        else:
-            log.write(">> No checkpoint found at '{}'\n".format(args.resume))
 
     # Data loading code
     train_transform = train_multi_augment2
@@ -181,70 +173,43 @@ def main():
     class_names = get_class_names()
     mitotic_spindle_class_i = class_names.index('Mitotic spindle')
 
-    if args.include_nn_mitotic:
-        cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_pos_nn_added.csv')
-        cherrypicked_mitotic_spindle_img_cell.update(set(cherrypicked_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values))
-        print('len cherrypicked_mitotic_spindle_img_cell', len(cherrypicked_mitotic_spindle_img_cell))
+    cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_pos_nn_added.csv')
+    cherrypicked_mitotic_spindle_img_cell.update(set(cherrypicked_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values))
     mitotic_bool_idx = labels_df.index.isin(cherrypicked_mitotic_spindle_img_cell)
 
-    def modify_label(labels, idx, val):
-        labels[idx] = val
-        return labels
+    negative_img_ids_cell = labels_df.index[np.logical_not(mitotic_bool_idx)].values
 
-    labels_df.loc[mitotic_bool_idx, 'image_level_pred'] = labels_df.loc[
-        mitotic_bool_idx, 'image_level_pred'].map(lambda x: modify_label(x, mitotic_spindle_class_i, 1))
-
-    if args.include_nn_mitotic:
-        cherrypicked_not_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_neg_nn_added.csv')
-        cherrypicked_not_mitotic_spindle_based_on_nn = set(cherrypicked_not_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values)
-        not_mitotic_bool_idx = labels_df.index.isin(cherrypicked_not_mitotic_spindle_based_on_nn)
-        labels_df.loc[not_mitotic_bool_idx, 'image_level_pred'] = labels_df.loc[
-            not_mitotic_bool_idx, 'image_level_pred'].map(lambda x: modify_label(x, mitotic_spindle_class_i, 0))
+    dfs = []
+    for fold in range(5):
+        dfs.append(pd.read_csv(f'../output/mitotic_pred_fold_{fold}.csv'))
+    pred_df = pd.concat(dfs)
+    pred_df.set_index(['ID', 'cell_i'], inplace=True)
+    positive_img_ids_cell = pred_df.index[pred_df['pred'] < 0.6].values
 
     if args.ignore_negative:
         raise NotImplementedError
 
-    if args.upsample_minorities:
-        cells_to_upsample = list(cherrypicked_mitotic_spindle_img_cell)
-        aggresome_class_i = class_names.index('Aggresome')
-        confident_aggresome_indices = list(labels_df.index[labels_df['image_level_pred'].map(lambda x: x[aggresome_class_i] > 0.9)])
-        print('confident_aggresome_indices len', len(confident_aggresome_indices))
-        print('confident_aggresome_indices[:5]', confident_aggresome_indices[:5])
-        cells_to_upsample += confident_aggresome_indices
-    else:
-        cells_to_upsample = None
-    train_dataset = ProteinDatasetCellSeparateLoading(trn_img_paths,
-                                            labels_df=labels_df,
-                                                      cells_to_upsample=cells_to_upsample,
-                                            img_size=args.img_size,
-                                            in_channels=args.in_channels,
-                                            transform=train_transform,
-                                                      basepath_2_ohe=basepath_2_ohe_vector,
-                                                      normalize=args.normalize,
+    train_dataset = ProteinMitoticDatasetCellSeparateLoading(trn_img_paths,
+                                                             positive_img_ids_cell,
+                                                             negative_img_ids_cell,
+                                                            in_channels=args.in_channels,
+                                                            transform=train_transform,
                                                       target_raw_img_size=args.target_raw_img_size
     )
     train_loader = DataLoader(
         train_dataset,
-        sampler=RandomSampler(train_dataset),
+        sampler=MitoticBalancingSubSampler(train_dataset.img_ids_cell, train_dataset.id_cell_2_y),
         batch_size=args.batch_size,
         drop_last=False,
         num_workers=args.workers,
         pin_memory=True,
     )
 
-    # valid_dataset = ProteinDatasetCellLevel(val_img_paths,
-    #                                         labels_df=labels_df,
-    #                                         img_size=args.img_size,
-    #                                         batch_size=64,
-    #                                         is_trainset=True,
-    #                                         in_channels=args.in_channels)
-
-    valid_dataset = ProteinDatasetCellSeparateLoading(val_img_paths,
-                                            labels_df=labels_df,
+    valid_dataset = ProteinMitoticDatasetCellSeparateLoading(val_img_paths,
+                                                             positive_img_ids_cell,
+                                                             sample(list(negative_img_ids_cell), 10000),
                                             img_size=args.img_size,
                                             in_channels=args.in_channels,
-                                                      basepath_2_ohe=basepath_2_ohe_vector,
-                                                      normalize=args.normalize,
                                                       target_raw_img_size=args.target_raw_img_size)
     valid_loader = DataLoader(
         valid_dataset,
@@ -257,18 +222,18 @@ def main():
 
     log.write('** start training here! **\n')
     log.write('\n')
-    log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/map/focal     |best_epoch/best_focal|  min \n')
+    log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/pr_auc/---     |best_epoch/best_pr_auc|  min \n')
     log.write('-----------------------------------------------------------------------------------------------------------------\n')
     start_epoch += 1
 
     if args.eval_at_start:
         with torch.no_grad():
-            valid_loss, valid_acc, val_focal, val_map_score = validate(valid_loader, model, criterion, -1, log)
+            valid_loss, valid_acc, val_pr_auc_score = validate(valid_loader, model, criterion, -1, log)
         print('\r', end='', flush=True)
         log.write(
             '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.1f  |    %6.4f  %6.4f   | %3.1f min \n' % \
-            (-1, -1, -1, -1, -1, valid_loss, valid_acc, val_map_score, val_focal,
-                   best_epoch, best_focal, -1))
+            (-1, -1, -1, -1, -1, valid_loss, valid_acc, val_pr_auc_score, -1,
+                   best_epoch, -1, -1))
 
     for epoch in range(start_epoch, args.epochs + 1):
         end = time.time()
@@ -287,20 +252,20 @@ def main():
                                             lr=lr, agg_steps=args.gradient_accumulation_steps)
 
         with torch.no_grad():
-            valid_loss, valid_acc, val_focal, val_map_score = validate(valid_loader, model, criterion, epoch, log)
+            valid_loss, valid_acc, val_pr_auc_score = validate(valid_loader, model, criterion, epoch, log)
 
         # remember best loss and save checkpoint
-        is_best = val_focal < best_focal
+        is_best = val_pr_auc_score > best_val_pr_auc_score
         best_loss = min(valid_loss, best_loss)
         best_epoch = epoch if is_best else best_epoch
-        best_focal = val_focal if is_best else best_focal
+        best_val_pr_auc_score = val_pr_auc_score if is_best else best_val_pr_auc_score
 
         print('\r', end='', flush=True)
         log.write('%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f  %6.1f |  %6.4f  %6.4f | %3.1f min \n' % \
-                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, val_map_score, val_focal,
-                   best_epoch, best_focal, (time.time() - end) / 60))
+                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, val_pr_auc_score, -1,
+                   best_epoch, best_val_pr_auc_score, (time.time() - end) / 60))
 
-        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_map=best_focal)
+        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_map=best_val_pr_auc_score)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5, agg_steps=1):
@@ -326,8 +291,10 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5,
         images = Variable(images.cuda())
         labels = Variable(labels.cuda())
 
-        outputs = model(images)
-        loss = criterion(outputs, labels, epoch=epoch)
+        logits = model(images)
+
+        probs = F.sigmoid(logits)
+        loss = criterion(probs, labels)
 
         losses.update(loss.item())
         loss.backward()
@@ -342,8 +309,6 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5,
         batch_time.update(time.time() - end)
         end = time.time()
 
-        logits = outputs
-        probs = F.sigmoid(logits)
         acc = multi_class_acc(probs, labels)
         accuracy.update(acc)
 
@@ -355,7 +320,7 @@ def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5,
     return iter, losses.avg, accuracy.avg
 
 
-def validate(valid_loader, model, criterion, epoch, log, focal_loss=FocalLoss().cuda()):
+def validate(valid_loader, model, criterion, epoch, log, loss=BCELoss().cuda()):
     batch_time = AverageMeter()
     losses = AverageMeter()
     accuracy = AverageMeter()
@@ -373,11 +338,9 @@ def validate(valid_loader, model, criterion, epoch, log, focal_loss=FocalLoss().
         images = Variable(images.cuda())
         labels = Variable(labels.cuda())
 
-        outputs = model(images)
-        loss = criterion(outputs, labels, epoch=epoch)
-
-        logits = outputs
+        logits = model(images)
         probs = F.sigmoid(logits)
+        loss = criterion(probs, labels)
 
         if np.random.rand() < 0.005:
             for prob, label in zip(probs, labels):
@@ -403,17 +366,14 @@ def validate(valid_loader, model, criterion, epoch, log, focal_loss=FocalLoss().
     probs = np.vstack(probs_list)
     y_true = np.vstack(labels_list)
 
-    logits = np.vstack(logits_list)
-    valid_focal_loss = focal_loss.forward(torch.from_numpy(logits), torch.from_numpy(y_true))
+    for prob, lab in zip(probs[:50], y_true[:50]):
+        print(prob, lab)
 
-    class_names = get_class_names()
-    y_true_bin = np.zeros_like(y_true)
-    y_true_bin[y_true > 0.5] = 1
-    map_scores = average_precision_score(y_true_bin, probs, average=None)
-    for class_name, map_score in zip(class_names, map_scores):
-        log.write(f'{class_name}: {map_score:.2f}\n')
+    precision, recall, _ = precision_recall_curve(y_true, probs)
+    pr_auc = auc(recall, precision)
+    log.write(f'{pr_auc:.2f}\n')
 
-    return losses.avg, accuracy.avg, valid_focal_loss, np.nanmean(map_scores)
+    return losses.avg, accuracy.avg, pr_auc
 
 
 def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_epoch=None, best_map=None):
@@ -446,12 +406,9 @@ def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_e
             best_optim_fpath = os.path.join(model_out_dir, 'final_optim.pth')
             shutil.copyfile(optim_fpath, best_optim_fpath)
 
-def multi_class_acc(preds, targs, th=0.5, int_labels=False):
-    if int_labels:
-        preds = (preds > th).int()
-        targs = (targs > th).int()
-        return (preds == targs).float().mean()
-    bins = np.arange(0, 1, 0.05)
+
+def multi_class_acc(preds, targs):
+    bins = np.arange(0, 1, 0.1)
     preds = np.digitize(preds.cpu().detach().numpy(), bins=bins)
     targs = np.digitize(targs.cpu().detach().numpy(), bins=bins)
     return (preds == targs).mean()

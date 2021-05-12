@@ -22,31 +22,65 @@ def binary_cross_entropy_with_probs(
     num_points, num_classes = input.shape
 
     # Note that t.new_zeros, t.new_full put tensor on same device as t
-    # cum_losses = input.new_zeros(num_points)
-    # target_temp = input.new_full((num_points,), 1, dtype=torch.long)
-    # for y in range(num_classes):
-    #
-    #     # modified from https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Loss.cpp#L214
-    #     # log-sum-exp trick: http://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
-    #     max_val = (-input[:, y]).clamp(min=0)
-    #
-    #     y_loss = (1 - target_temp) * input[:, y] + max_val + ((-max_val).exp() + (-input[:, y] - max_val).exp()).log()
-    #     if weight is not None:
-    #         y_loss = y_loss * weight[y]
-    #     cum_losses += target[:, y].float() * y_loss
+    cum_losses = input.new_zeros(num_points)
+    target_temp = input.new_full((num_points,), 1, dtype=torch.long)
+    for y in range(num_classes):
 
-    max_val = (-input).clamp(min=0)
+        # modified from https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Loss.cpp#L214
+        # log-sum-exp trick: http://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
+        max_val = (-input[:, y]).clamp(min=0)
 
-    y_loss = (1 - target) * input + max_val + ((-max_val).exp() + (-input - max_val).exp()).log()
-    if weight is not None:
-        y_loss = y_loss * weight
+        y_loss = (1 - target_temp) * input[:, y] + max_val + ((-max_val).exp() + (-input[:, y] - max_val).exp()).log()
+        if weight is not None:
+            y_loss = y_loss * weight[y]
+        cum_losses += target[:, y].float() * y_loss
 
     if reduction == "none":
-        return y_loss
+        return cum_losses
     elif reduction == "mean":
-        return y_loss.mean()
+        return cum_losses.mean()
     elif reduction == "sum":
-        return y_loss.sum()
+        return cum_losses.sum()
+    else:
+        raise ValueError("Keyword 'reduction' must be one of ['none', 'mean', 'sum']")
+
+
+def binary_focal_with_probs(
+    input: torch.Tensor,
+    target: torch.Tensor,
+    weight: Optional[torch.Tensor] = None,
+    reduction: str = "mean",
+gamma: int = 2
+) -> torch.Tensor:
+    if len(input.shape) == 1:
+        input = input.reshape(-1, 1)
+        target = target.reshape(-1, 1)
+    num_points, num_classes = input.shape
+
+    # Note that t.new_zeros, t.new_full put tensor on same device as t
+    cum_losses = input.new_zeros(num_points)
+    target_temp = input.new_full((num_points,), 1, dtype=torch.long)
+    for y in range(num_classes):
+
+        # modified from https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Loss.cpp#L214
+        # log-sum-exp trick: http://gregorygundersen.com/blog/2020/02/09/log-sum-exp/
+        max_val = (-input[:, y]).clamp(min=0)
+
+        y_loss = (1 - target_temp) * input[:, y] + max_val + ((-max_val).exp() + (-input[:, y] - max_val).exp()).log()
+
+        invprobs = F.logsigmoid(-input[:, y] * (target_temp * 2.0 - 1.0))
+        y_loss = (invprobs * gamma).exp() * y_loss
+
+        if weight is not None:
+            y_loss = y_loss * weight[y]
+        cum_losses += target[:, y].float() * y_loss
+
+    if reduction == "none":
+        return cum_losses
+    elif reduction == "mean":
+        return cum_losses.mean()
+    elif reduction == "sum":
+        return cum_losses.sum()
     else:
         raise ValueError("Keyword 'reduction' must be one of ['none', 'mean', 'sum']")
 
@@ -126,6 +160,21 @@ class SoftCEHardLogLoss(nn.Module):
         log_loss = self.log_loss.forward(logit, labels)
         loss = ce_loss*(1 - self.hard_loss_weight) + log_loss*self.hard_loss_weight
         return loss
+
+
+class SoftFocalDifficultLogLoss(nn.Module):
+    def __init__(self, hard_loss_weight=0.5):
+        super(SoftFocalDifficultLogLoss, self).__init__()
+        self.soft_focal = binary_focal_with_probs
+        self.log_loss = HardLogLoss(soft_labels=True)
+        self.hard_loss_weight = hard_loss_weight
+
+    def forward(self, logit, labels, epoch='for compatibility'):
+        labels = labels.float()
+        ce_loss = self.soft_focal(logit, labels)
+        log_loss = self.log_loss.forward(logit, labels)
+        loss = ce_loss * (1 - self.hard_loss_weight) + log_loss * self.hard_loss_weight
+        return loss
         # return ce_loss
 
 
@@ -169,12 +218,41 @@ class FocalSymmetricLovaszHardLogLoss(nn.Module):
         self.focal_loss = FocalLoss()
         self.slov_loss = SymmetricLovaszLoss()
         self.log_loss = HardLogLoss()
+
     def forward(self, logit, labels,epoch=0):
         labels = labels.float()
         focal_loss = self.focal_loss.forward(logit, labels, epoch)
         slov_loss = self.slov_loss.forward(logit, labels, epoch)
         log_loss = self.log_loss.forward(logit, labels, epoch)
         loss = focal_loss*0.5 + slov_loss*0.5 +log_loss * 0.5
+        return loss
+
+
+class FocalSymmetricHardLogLoss(nn.Module):
+    def __init__(self):
+        super(FocalSymmetricHardLogLoss, self).__init__()
+        self.focal_loss = FocalLoss()
+        self.log_loss = HardLogLoss(soft_labels=True)
+
+    def forward(self, logit, labels,epoch=0):
+        labels = labels.float()
+        focal_loss = self.focal_loss.forward(logit, labels, epoch)
+        log_loss = self.log_loss.forward(logit, labels, epoch)
+        loss = focal_loss + log_loss * 0.25
+        return loss
+
+
+class SoftFocalSymmetricHardLogLoss(nn.Module):
+    def __init__(self):
+        super(SoftFocalSymmetricHardLogLoss, self).__init__()
+        self.focal_loss = FocalLoss()
+        self.log_loss = HardLogLoss(soft_labels=True)
+
+    def forward(self, logit, labels, epoch=0):
+        labels = labels.float()
+        focal_loss = self.focal_loss.forward(logit, labels, epoch)
+        log_loss = self.log_loss.forward(logit, labels, epoch)
+        loss = focal_loss * 0.5 + log_loss * 0.5
         return loss
 
 

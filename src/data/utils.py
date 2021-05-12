@@ -210,10 +210,12 @@ def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-
                  base_public_path='../input/publichpa_1024',
                  trn_cell_boxes_path='../input/cell_bboxes_train',
                  public_cell_boxes_path='../input/cell_bboxes_public',
-                 cell_img_size=512, aug=None):
-    is_from_train = 'train' in img_base_path
-    cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
+                 cell_img_size=512, aug=None, target_raw_img_size=None):
+    " cell_i must be 0-based "
+
     img_id = os.path.basename(img_base_path)
+    is_from_train = len(img_id) > 15
+    cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
     bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
     bboxes_df = pd.read_pickle(bboxes_path)
 
@@ -250,7 +252,93 @@ def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-
         down = diff - up
         img_cell = cv2.copyMakeBorder(img_cell, up, down, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0])
 
-    if cell_img_size is not None:
+    if target_raw_img_size is not None:
+        prescale_factor = target_raw_img_size / img_rgby.shape[0]
+        if prescale_factor != 1:
+            current_shape = img_cell.shape[:2]
+            target_raw_size = int(prescale_factor*current_shape[0])
+            img_cell = cv2.resize(img_cell, (target_raw_size, target_raw_size))
+            if cell_img_size is not None:
+                img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+            else:
+                img_cell = cv2.resize(img_cell, current_shape)
+        elif cell_img_size is not None:
+            img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+
+    elif cell_img_size is not None:
+        img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+    return img_cell
+
+
+def get_cell_img_mitotic(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-image-classification/train',
+                 base_public_path='../input/publichpa_1024',
+                 trn_cell_boxes_path='../input/cell_bboxes_train',
+                 public_cell_boxes_path='../input/cell_bboxes_public',
+                 cell_img_size=224, aug=None, target_raw_img_size=None):
+    " cell_i must be 0-based "
+
+    img_id = os.path.basename(img_base_path)
+    is_from_train = len(img_id) > 15
+    cell_boxes_path = trn_cell_boxes_path if is_from_train else public_cell_boxes_path
+    bboxes_path = os.path.join(cell_boxes_path, f'{img_id}.pkl')
+    bboxes_df = pd.read_pickle(bboxes_path)
+
+    img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
+
+    row = bboxes_df.loc[cell_i + 1]
+    # except:
+    #     print('img_base_path', img_base_path)
+    #     print('bboxes_df', bboxes_df)
+    #     labels_df = pd.read_hdf('../output/image_level_labels.h5')
+    #     print('labels_df', labels_df.loc[img_base_path])
+
+    y_min = row['y_min']
+    y_max = row['y_max']
+    x_min = row['x_min']
+    x_max = row['x_max']
+
+    Y_min = max(0, y_min - (y_max - y_min)//2)
+    Y_max = y_max + (y_max - y_min)//2
+    X_min = max(0, x_min - (x_max - x_min) // 2)
+    X_max = x_max + (x_max - x_min) // 2
+
+    img_cell = img_rgby[y_min:y_max, x_min:x_max, :].copy()
+    img_cell[row['cell_rows_del'], row['cell_cols_del'], :] = img_cell[row['cell_rows_del'], row['cell_cols_del'], :]/3
+    img_center_row = np.concatenate((img_rgby[y_min:y_max, X_min:x_min, :]/3,
+                                     img_cell,
+                                     img_rgby[y_min:y_max, x_max:X_max, :]/3), axis=1)
+    img_cell = np.concatenate((img_rgby[Y_min: y_min, X_min:X_max]/3,
+                               img_center_row,
+                               img_rgby[y_max: Y_max, X_min:X_max]/3), axis=0)
+
+    if aug is not None:
+        img_cell = aug(img_cell)
+
+    if img_cell.shape[0] > img_cell.shape[1]:
+        diff = img_cell.shape[0] - img_cell.shape[1]
+        left = diff // 2
+        right = diff - left
+        img_cell = cv2.copyMakeBorder(img_cell, 0, 0, left, right, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0])
+    else:
+        diff = img_cell.shape[1] - img_cell.shape[0]
+        up = diff // 2
+        down = diff - up
+        img_cell = cv2.copyMakeBorder(img_cell, up, down, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0])
+
+    if target_raw_img_size is not None:
+        prescale_factor = target_raw_img_size / img_rgby.shape[0]
+        if prescale_factor != 1:
+            current_shape = img_cell.shape[:2]
+            target_raw_size = int(prescale_factor*current_shape[0])
+            img_cell = cv2.resize(img_cell, (target_raw_size, target_raw_size))
+            if cell_img_size is not None:
+                img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+            else:
+                img_cell = cv2.resize(img_cell, current_shape)
+        elif cell_img_size is not None:
+            img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
+
+    elif cell_img_size is not None:
         img_cell = cv2.resize(img_cell, (cell_img_size, cell_img_size))
     return img_cell
 
@@ -368,7 +456,7 @@ def get_cell_img_with_mask(img_id, cell_i, is_public_data, return_mask=True, tar
     bboxes_path = os.path.join(bboxes_path_root, f'{img_id}.pkl')
     bboxes_df = pd.read_pickle(bboxes_path)
 
-    cell_bbox = bboxes_df.loc[cell_i]
+    cell_bbox = bboxes_df.loc[cell_i + 1]
 
     img_ = img_rgby[cell_bbox['y_min']:cell_bbox['y_max'], cell_bbox['x_min']:cell_bbox['x_max'], :]
     img_[cell_bbox['cell_rows_del'], cell_bbox['cell_cols_del'], :] = 0

@@ -11,7 +11,7 @@ seed(10)
 import numpy as np
 from torch.utils.data.sampler import Sampler
 from random import sample, shuffle
-from .utils import get_cells_from_img, get_cell_img, get_cell_img_with_mask
+from .utils import get_cells_from_img, get_cell_img, get_cell_img_with_mask, get_cell_img_mitotic
 from multiprocessing import Pool, cpu_count
 import pandas as pd
 from sklearn.metrics import normalized_mutual_info_score
@@ -167,6 +167,7 @@ class ProteinMLDatasetModified(Dataset):
         return self.num
 
 
+# NOT TESTED, be aware of possible 0/1 cell indexing confusion
 class ProteinDatasetImageLevel(Dataset):
     def __init__(self,
                  img_paths,
@@ -417,25 +418,6 @@ class ProteinDatasetCellLevel(Dataset):
         return self.num
 
 
-def img_nmi_avg_parellel(preds_all):
-    img_path = preds_all.index[0][0]
-    preds_all = preds_all.values
-    nmis_pairwise = []
-    for i in range(len(preds_all)):
-        for j in range(i + 1, len(preds_all)):
-            nmi_ = (normalized_mutual_info_score(preds_all[j][0],
-                                                 preds_all[i][0]) + normalized_mutual_info_score(
-                preds_all[i][0], preds_all[j][0])) / 2
-            nmis_pairwise.append(nmi_)
-    return pd.DataFrame({'img_path': [img_path], 'similarity': [np.nanmean(nmis_pairwise)]})
-
-
-def applyParallel(dfGrouped, func):
-    with Pool(cpu_count() // 2) as p:
-        ret_list = p.map(func, [group for name, group in dfGrouped])
-    return pd.concat(ret_list)
-
-
 class ProteinDatasetCellSeparateLoading(Dataset):
     def __init__(self,
                  img_paths,
@@ -444,43 +426,40 @@ class ProteinDatasetCellSeparateLoading(Dataset):
                  transform=None,
                  return_label=True,
                  in_channels=4,
-                 hard_data_subsample=None,
                  int_labels=False,
                  image_level_labels=False,
                  basepath_2_ohe=None,
-                 normalize=False
+                 normalize=False,
+                 cells_to_upsample=None,
+                 upsampling_factor=10,
+                 target_raw_img_size=None
                  ):
         self.img_size = img_size
         self.return_label = return_label
         self.in_channels = in_channels
         self.transform = transform
 
-        labeled_paths_set = set(labels_df.index.get_level_values(0))
-        img_paths = [img_path for img_path in img_paths if img_path in labeled_paths_set]
+        labeled_id_set = set(labels_df.index.get_level_values(0))
+        img_ids = [os.path.basename(img_path) for img_path in img_paths if os.path.basename(img_path) in labeled_id_set]
 
-        labels_df = labels_df.loc[img_paths]
-
-        if hard_data_subsample is not None:
-            df_proxy_variability = applyParallel(labels_df.groupby(level=0), img_nmi_avg_parellel)
-
-            num_samples = int(np.ceil(hard_data_subsample * len(df_proxy_variability)))
-
-            hard_paths = set(df_proxy_variability.sort_values(by='similarity')['img_path'].values[:num_samples])
-            labeled_paths_all = [path for path in labels_df.index.get_level_values(0) if path not in hard_paths]
-            # adding random sample out of other imgs not to focus on potentially weird imgs with low similarity only
-            labeled_paths_all = sample(labeled_paths_all, max(1, num_samples)) + list(hard_paths)
-            labels_df = labels_df.loc[set(labeled_paths_all)]
+        labels_df = labels_df.loc[img_ids]
 
         self.num = len(labels_df)
         self.labels_df = labels_df
         self.int_labels = int_labels
-        self.basepath_cell = labels_df.index.values
+        if cells_to_upsample is None:
+            self.img_ids_cell = labels_df.index.values
+        else:
+            self.img_ids_cell = np.concatenate((labels_df.index.values,
+                                                np.array(cells_to_upsample * upsampling_factor,
+                                                         dtype=np.dtype('<U36,int'))))
         self.image_level_labels = image_level_labels
-        self.basepath_2_ohe_vector = basepath_2_ohe
+        self.img_id_2_ohe_vector = {os.path.basename(img_path): ohe for img_path, ohe in basepath_2_ohe.items()}
         self.normalize = normalize
         if self.normalize:
-            self.normalization = transforms.Normalize(mean=[0.485, 0.456, 0.406, 0.406],
-                                                      std=[0.229, 0.224, 0.225, 0.225])
+            self.normalization = transforms.Normalize(mean=[0.074598, 0.050630, 0.050891, 0.076287],  # rgby
+                                                      std=[0.122813, 0.085745, 0.129882, 0.119411])
+        self.target_raw_img_size = target_raw_img_size
 
     def preprocess_image(self, image):
         image = image / 255.0
@@ -492,11 +471,11 @@ class ProteinDatasetCellSeparateLoading(Dataset):
         return image
 
     def __getitem__(self, index):
-        img_basepath, cell_i = self.basepath_cell[index]
+        img_id, cell_i = self.img_ids_cell[index]
         if self.image_level_labels:
-            y = self.basepath_2_ohe_vector[img_basepath]
+            y = self.img_id_2_ohe_vector[img_id]
         else:
-            y_raw = self.labels_df.loc[(img_basepath, cell_i), 'image_level_pred']
+            y_raw = self.labels_df.loc[(img_id, cell_i), 'image_level_pred']
             if self.int_labels:
                 random_numbers = np.random.uniform(size=len(y_raw))
                 y = np.zeros_like(y_raw)
@@ -504,7 +483,7 @@ class ProteinDatasetCellSeparateLoading(Dataset):
             else:
                 y = y_raw
 
-        cell_img = get_cell_img(img_basepath, cell_i, aug=self.transform)
+        cell_img = get_cell_img(img_id, cell_i, aug=self.transform, target_raw_img_size=self.target_raw_img_size)
 
         cell_img = self.preprocess_image(cell_img)
 
@@ -514,36 +493,69 @@ class ProteinDatasetCellSeparateLoading(Dataset):
         return self.num
 
 
-class BalancingSubSampler(Sampler[int]):
+class ProteinMitoticDatasetCellSeparateLoading(Dataset):
+    def __init__(self,
+                 img_paths,
+                 positive_img_ids_cell,
+                 negative_img_ids_cell,
+                 img_size=512,
+                 transform=None,
+                 return_label=True,
+                 in_channels=4,
+                 target_raw_img_size=None
+                 ):
+        self.img_size = img_size
+        self.return_label = return_label
+        self.in_channels = in_channels
+        self.transform = transform
 
-    def __init__(self, trn_img_paths, basepath_2_ohe_vector, class_names, required_class_count=1500) -> None:
-        self.trn_ohes = np.array([basepath_2_ohe_vector[path] for path in trn_img_paths])
-        self.class_name_2_i = {name: i for i, name in enumerate(class_names)}
-        self.class_name_2_count = [(name, count) for name, count in zip(class_names,
-                                                                        self.trn_ohes.sum(axis=0))]
-        self.class_name_2_indices = {class_name: np.where(self.trn_ohes[:, class_i] == 1)[0]
-                                     for class_i, class_name in enumerate(class_names)}
-        self.required_class_count = required_class_count
+        labeled_id_set = set([x[0] for x in positive_img_ids_cell] + [x[0] for x in negative_img_ids_cell])
+        fold_img_ids = {os.path.basename(img_path) for img_path in img_paths if os.path.basename(img_path) in labeled_id_set}
+
+        positive_id_cell = [x for x in positive_img_ids_cell if x[0] in fold_img_ids]
+        neg_id_cell = [x for x in negative_img_ids_cell if x[0] in fold_img_ids]
+
+        self.id_cell_2_y = {x: 1.0 for x in positive_id_cell}
+        self.id_cell_2_y.update({x: 0.0 for x in neg_id_cell})
+
+        self.num = len(self.id_cell_2_y)
+        self.img_ids_cell = positive_id_cell + neg_id_cell
+
+        self.target_raw_img_size = target_raw_img_size
+
+    def preprocess_image(self, image):
+        image = image / 255.0
+        if len(image.shape) == 3:
+            image = image.transpose((2, 0, 1))
+        image = torch.from_numpy(image.astype(np.float32))
+        return image
+
+    def __getitem__(self, index):
+        img_id, cell_i = self.img_ids_cell[index]
+        y = self.id_cell_2_y[(img_id, cell_i)]
+
+        cell_img = get_cell_img_mitotic(img_id, cell_i, aug=self.transform, target_raw_img_size=self.target_raw_img_size)
+
+        cell_img = self.preprocess_image(cell_img)
+
+        return cell_img, np.array([y], dtype=np.float32), index
+
+    def __len__(self):
+        return self.num
+
+
+class MitoticBalancingSubSampler(Sampler[int]):
+
+    def __init__(self, img_ids_cell, id_cell_2_y) -> None:
+        self.pos_indices = [i for i, img_id_cell in enumerate(img_ids_cell) if id_cell_2_y[img_id_cell] == 1]
+        self.neg_indices = [i for i, img_id_cell in enumerate(img_ids_cell) if id_cell_2_y[img_id_cell] == 0]
+        self.required_class_count = int(sum(id_cell_2_y.values()))
         self.selected_indices = None
 
     def prepare_balanced_subset(self):
-        shuffle(self.class_name_2_count)
-        self.selected_indices = []
-        selected_indices_set = set()
-        for class_name, class_count in self.class_name_2_count:
-            # check already added
-            present_count = self.trn_ohes[self.selected_indices, self.class_name_2_i[class_name]].sum()
-            needed_additionally_count = max(0, self.required_class_count - present_count)
-
-            remaining_class_indices = [idx for idx in self.class_name_2_indices[class_name]
-                                       if idx not in selected_indices_set]
-            if len(remaining_class_indices) > needed_additionally_count:
-                class_indices_added = sample(remaining_class_indices, needed_additionally_count)
-            else:
-                class_indices_added = remaining_class_indices
-
-            self.selected_indices.extend(class_indices_added)
-            selected_indices_set.update(class_indices_added)
+        neg_indices = sample(self.neg_indices, self.required_class_count)
+        self.selected_indices = neg_indices + self.pos_indices
+        shuffle(self.selected_indices)
 
     @property
     def num_samples(self) -> int:

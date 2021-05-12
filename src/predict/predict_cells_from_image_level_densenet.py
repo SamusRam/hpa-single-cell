@@ -1,4 +1,7 @@
 import sys
+
+from src.models.encodings_pretrained import BestfittingEncodingsModel
+
 sys.path.insert(0, '..')
 import argparse
 import pickle
@@ -24,11 +27,9 @@ parser.add_argument('--arch', default='class_densenet121_large_dropout', type=st
 parser.add_argument('--num_classes', default=19, type=int, help='number of classes (default: 19)')
 parser.add_argument('--in_channels', default=4, type=int, help='in channels (default: 4)')
 parser.add_argument('--img_size', default=1024, type=int, help='image size (default: 512)')
-parser.add_argument('--batch_size', default=8, type=int, help='train mini-batch size (default: 32)')
-parser.add_argument('--workers', default=multiprocessing.cpu_count() - 1, type=int, help='number of data loading workers (default: 3)')
 parser.add_argument('--num-folds', default=5, type=int)
-parser.add_argument('--output-path', default='../output/image_level_labels_repaired_REPLACE.h5')
 parser.add_argument('--fold-single', default=None, type=int)
+parser.add_argument('--fold-one-fifth-number', default=None, type=int)
 
 
 def main():
@@ -38,8 +39,6 @@ def main():
     num_folds = args.num_folds
 
     fold_single = args.fold_single
-
-    batch_size = args.batch_size
 
     # set cuda visible device
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
@@ -60,9 +59,11 @@ def main():
         model_params['encoder'] = args.effnet_encoder
 
     models = []
+    models_features = []
     if fold_single is not None:
         for _ in range(fold_single):
             models.append('a')
+            models_features.append('a')
 
     folds_list = [fold_single] if fold_single is not None else list(range(num_folds))
     for fold in folds_list:
@@ -74,29 +75,40 @@ def main():
         model_.eval()
         models.append(model_)
 
+        embs_extractor = BestfittingEncodingsModel(model_)
+        models_features.append(embs_extractor)
+
     with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
-
-    img_basepaths_list = []
-    img_cell_num_list = []
-    label_probs_list = []
 
     vert_flip = VerticalFlip(always_apply=True)
     hor_flip = HorizontalFlip(always_apply=True)
     rot = Rotate(always_apply=True, limit=(89, 91))
 
-    # with open('../output/bbox_pred_inconsistent_basepaths.pkl', 'rb') as f:
-    #     img_ids_problematic = set([os.path.basename(x) for x in pickle.load(f)])
-    #
-    # print('img_ids_problematic', img_ids_problematic)
+    embs_output = 'output/densenet121_embs'
+    if not os.path.exists(embs_output):
+        os.makedirs(embs_output)
 
+    pred_output = 'output/densenet121_pred'
+    if not os.path.exists(pred_output):
+        os.makedirs(pred_output)
     for fold in folds_list:
         _, val_img_paths = folds[fold]
-        # val_img_paths = ['../input/hpa-single-cell-image-classification/train/0032a07e-bba9-11e8-b2ba-ac1f6b6435d0']
 
-        # val_img_paths = [x for x in val_img_paths if os.path.basename(x) in img_ids_problematic]
-        #
-        # print('val_img_paths', val_img_paths)
+        if args.fold_one_fifth_number is not None:
+            fold_one_fifth_len = len(val_img_paths)//5
+            if args.fold_one_fifth_number < 4:
+                val_img_paths = val_img_paths[args.fold_one_fifth_number*fold_one_fifth_len:
+                                              (args.fold_one_fifth_number + 1)*fold_one_fifth_len]
+            elif args.fold_one_fifth_number == 4:
+                val_img_paths = val_img_paths[args.fold_one_fifth_number*fold_one_fifth_len:]
+
+        # already_computed_paths_embs = {p.replace('.h5', '') for p in os.listdir(embs_output)}
+        already_computed_paths_preds = {p.replace('.h5', '') for p in os.listdir(pred_output)}
+        # already_computed_paths = already_computed_paths_embs.intersection(already_computed_paths_preds)
+        already_computed_paths = already_computed_paths_preds
+
+        val_img_paths = [path for path in val_img_paths if os.path.basename(path) not in already_computed_paths]
 
         train_df = get_train_df_ohe(clean_from_duplicates=True)
         public_df = get_public_df_ohe(clean_from_duplicates=True)
@@ -104,31 +116,17 @@ def main():
         available_paths = set(np.concatenate((train_df['img_base_path'].values, public_df['img_base_path'].values)))
         fold_img_paths = [path for path in val_img_paths if path in available_paths]
 
-        for base_path in tqdm(fold_img_paths, desc=f'Processing fold {fold}'):
+        for base_path in tqdm(fold_img_paths[::-1], desc=f'Processing fold {fold}'):
             cell_2_predictions_list = []
-            # cell_imgs = get_cells_from_img(base_path, return_raw=True, target_img_size=1024)
-            cell_images_tiled_all = []
+            cell_2_embs_list = []
 
-            # cell_i = 0
-            # for cell_img in cell_imgs:
             for cell_img in get_cells_from_img(base_path, return_raw=True, target_img_size=1024):
-                cell_images_tiled_all.extend(get_cell_copied(cell_img, augmentations=[vert_flip, hor_flip, rot]))
-                # import matplotlib.pyplot as plt
-                # if cell_i  + 1 == 14:
-                # for i in range(4, 5):
-                #     plt.figure(figsize=(10, 10))
-                #     plt.imshow(cell_images_tiled_all[-i][:, :, :3])
-                #     plt.savefig(f'{cell_i}_{i}.png')
-                # cell_i += 1
-
-
-            for batch_i in range(len(cell_images_tiled_all)//batch_size + (1 if len(cell_images_tiled_all)%batch_size != 0 else 0)):
-                classifier_batch_next = cell_images_tiled_all[batch_i*batch_size: (batch_i + 1)*batch_size]
+                classifier_batch_next = get_cell_copied(cell_img, augmentations=[vert_flip, hor_flip, rot])
                 images_batch_torch_np = np.stack(classifier_batch_next).astype(np.float32)
                 images_batch_torch_np = images_batch_torch_np.transpose((0, 3, 1, 2))
                 with torch.no_grad():
                     cell_predictions_batch = F.sigmoid(models[fold](torch.from_numpy(images_batch_torch_np).cuda())).detach().cpu().numpy()
-                #                     print(cell_predictions_batch.shape)
+
                 cell_predictions_batch_per_cell = np.empty(
                     (cell_predictions_batch.shape[0] // 4, cell_predictions_batch.shape[1]))
                 for row_i in range(cell_predictions_batch_per_cell.shape[0]):
@@ -136,19 +134,29 @@ def main():
                         axis=0)
                 cell_2_predictions_list.append(cell_predictions_batch_per_cell)
 
-            if len(cell_2_predictions_list) == 0: continue
+                with torch.no_grad():
+                    cell_embs_batch = models_features[fold](torch.from_numpy(images_batch_torch_np).cuda()).detach().cpu().numpy()
+                cell_embs_batch_per_cell = np.empty(
+                    (cell_embs_batch.shape[0] // 4, cell_embs_batch.shape[1]))
+                for row_i in range(cell_embs_batch_per_cell.shape[0]):
+                    cell_embs_batch_per_cell[row_i] = cell_embs_batch[row_i * 4: (row_i + 1) * 4].mean(
+                        axis=0)
+                cell_2_embs_list.append(cell_embs_batch_per_cell)
+
+            if len(cell_2_embs_list) == 0: continue
+            cell_2_embs_np = np.concatenate(cell_2_embs_list) if len(cell_2_embs_list) > 1 else cell_2_embs_list[0]
             cell_2_predictions_np = np.concatenate(cell_2_predictions_list) if len(cell_2_predictions_list) > 1 else cell_2_predictions_list[0]
 
-            img_basepaths_list.extend([base_path for _ in range(len(cell_2_predictions_np))])
-            img_cell_num_list.extend(list(range(len(cell_2_predictions_np))))
-            label_probs_list.extend([pred_vec for pred_vec in cell_2_predictions_np])
-            # print(cell_2_predictions_np.shape, cell_2_predictions_np[13][15], cell_2_predictions_np[14][15])
+            img_cell_num_list = list(range(len(cell_2_predictions_np)))
 
-    image_level_labels_df = pd.DataFrame({'img_basepath': img_basepaths_list,
-                                          'img_cell_number': img_cell_num_list,
-                                          'image_level_pred': label_probs_list})
-    output_path = args.output_path.replace('REPLACE', f'{fold_single}') if fold_single is not None else args.output_path.replace('_REPLACE', '')
-    image_level_labels_df.to_hdf(output_path, key='data')
+            image_level_labels_df = pd.DataFrame({'img_cell_number': img_cell_num_list,
+                                                  'image_level_pred': [pred_vec for pred_vec in cell_2_predictions_np]})
+            image_level_labels_df.to_hdf(os.path.join(pred_output, f'{os.path.basename(base_path)}.h5'), key='data')
+
+            image_level_embs_df = pd.DataFrame({'img_cell_number': img_cell_num_list,
+                                                'image_level_embs': [embs_vec for embs_vec in cell_2_embs_np]})
+            image_level_embs_df.to_hdf(os.path.join(embs_output, f'{os.path.basename(base_path)}.h5'),
+                                         key='data')
 
 
 if __name__ == '__main__':

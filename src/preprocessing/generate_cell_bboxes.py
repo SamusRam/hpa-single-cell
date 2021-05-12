@@ -104,6 +104,8 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
         print(len(img_ids))
     else:
         img_ids = [img_id for img_id in img_ids if not os.path.exists(os.path.join(OUTPUT_PATH, f'{img_id}.pkl'))]
+
+    print('ToDO', img_ids)
     dataset = ProteinMLDatasetModified(img_ids, folder=folder, resize=False)
     loader = DataLoader(
         dataset,

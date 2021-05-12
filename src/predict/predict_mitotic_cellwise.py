@@ -181,10 +181,9 @@ def main():
     class_names = get_class_names()
     mitotic_spindle_class_i = class_names.index('Mitotic spindle')
 
-    if args.include_nn_mitotic:
-        cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_pos_nn_added.csv')
-        cherrypicked_mitotic_spindle_img_cell.update(set(cherrypicked_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values))
-        print('len cherrypicked_mitotic_spindle_img_cell', len(cherrypicked_mitotic_spindle_img_cell))
+    cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_pos_nn_added.csv')
+    cherrypicked_mitotic_spindle_img_cell.update(set(cherrypicked_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values))
+    print('len cherrypicked_mitotic_spindle_img_cell', len(cherrypicked_mitotic_spindle_img_cell))
     mitotic_bool_idx = labels_df.index.isin(cherrypicked_mitotic_spindle_img_cell)
 
     def modify_label(labels, idx, val):
@@ -194,50 +193,7 @@ def main():
     labels_df.loc[mitotic_bool_idx, 'image_level_pred'] = labels_df.loc[
         mitotic_bool_idx, 'image_level_pred'].map(lambda x: modify_label(x, mitotic_spindle_class_i, 1))
 
-    if args.include_nn_mitotic:
-        cherrypicked_not_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_neg_nn_added.csv')
-        cherrypicked_not_mitotic_spindle_based_on_nn = set(cherrypicked_not_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values)
-        not_mitotic_bool_idx = labels_df.index.isin(cherrypicked_not_mitotic_spindle_based_on_nn)
-        labels_df.loc[not_mitotic_bool_idx, 'image_level_pred'] = labels_df.loc[
-            not_mitotic_bool_idx, 'image_level_pred'].map(lambda x: modify_label(x, mitotic_spindle_class_i, 0))
-
-    if args.ignore_negative:
-        raise NotImplementedError
-
-    if args.upsample_minorities:
-        cells_to_upsample = list(cherrypicked_mitotic_spindle_img_cell)
-        aggresome_class_i = class_names.index('Aggresome')
-        confident_aggresome_indices = list(labels_df.index[labels_df['image_level_pred'].map(lambda x: x[aggresome_class_i] > 0.9)])
-        print('confident_aggresome_indices len', len(confident_aggresome_indices))
-        print('confident_aggresome_indices[:5]', confident_aggresome_indices[:5])
-        cells_to_upsample += confident_aggresome_indices
-    else:
-        cells_to_upsample = None
-    train_dataset = ProteinDatasetCellSeparateLoading(trn_img_paths,
-                                            labels_df=labels_df,
-                                                      cells_to_upsample=cells_to_upsample,
-                                            img_size=args.img_size,
-                                            in_channels=args.in_channels,
-                                            transform=train_transform,
-                                                      basepath_2_ohe=basepath_2_ohe_vector,
-                                                      normalize=args.normalize,
-                                                      target_raw_img_size=args.target_raw_img_size
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        sampler=RandomSampler(train_dataset),
-        batch_size=args.batch_size,
-        drop_last=False,
-        num_workers=args.workers,
-        pin_memory=True,
-    )
-
-    # valid_dataset = ProteinDatasetCellLevel(val_img_paths,
-    #                                         labels_df=labels_df,
-    #                                         img_size=args.img_size,
-    #                                         batch_size=64,
-    #                                         is_trainset=True,
-    #                                         in_channels=args.in_channels)
+    labels_df = labels_df.loc[mitotic_bool_idx]
 
     valid_dataset = ProteinDatasetCellSeparateLoading(val_img_paths,
                                             labels_df=labels_df,
@@ -255,224 +211,37 @@ def main():
         pin_memory=True
     )
 
-    log.write('** start training here! **\n')
-    log.write('\n')
-    log.write('epoch    iter      rate     |  train_loss/acc  |    valid_loss/acc/map/focal     |best_epoch/best_focal|  min \n')
-    log.write('-----------------------------------------------------------------------------------------------------------------\n')
-    start_epoch += 1
-
-    if args.eval_at_start:
-        with torch.no_grad():
-            valid_loss, valid_acc, val_focal, val_map_score = validate(valid_loader, model, criterion, -1, log)
-        print('\r', end='', flush=True)
-        log.write(
-            '%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f %6.1f  |    %6.4f  %6.4f   | %3.1f min \n' % \
-            (-1, -1, -1, -1, -1, valid_loss, valid_acc, val_map_score, val_focal,
-                   best_epoch, best_focal, -1))
-
-    for epoch in range(start_epoch, args.epochs + 1):
-        end = time.time()
-
-        # set manual seeds per epoch
-        np.random.seed(epoch)
-        torch.manual_seed(epoch)
-        torch.cuda.manual_seed_all(epoch)
-
-        # adjust learning rate for each epoch
-        lr_list = scheduler.step(model, epoch, args.epochs)
-        lr = lr_list[0]
-
-        # train for one epoch on train set
-        iter, train_loss, train_acc = train(train_loader, model, criterion, optimizer, epoch, clipnorm=args.clipnorm,
-                                            lr=lr, agg_steps=args.gradient_accumulation_steps)
-
-        with torch.no_grad():
-            valid_loss, valid_acc, val_focal, val_map_score = validate(valid_loader, model, criterion, epoch, log)
-
-        # remember best loss and save checkpoint
-        is_best = val_focal < best_focal
-        best_loss = min(valid_loss, best_loss)
-        best_epoch = epoch if is_best else best_epoch
-        best_focal = val_focal if is_best else best_focal
-
-        print('\r', end='', flush=True)
-        log.write('%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  |    %0.4f  %6.4f %6.4f  %6.1f |  %6.4f  %6.4f | %3.1f min \n' % \
-                  (epoch, iter + 1, lr, train_loss, train_acc, valid_loss, valid_acc, val_map_score, val_focal,
-                   best_epoch, best_focal, (time.time() - end) / 60))
-
-        save_model(model, is_best, model_out_dir, optimizer=optimizer, epoch=epoch, best_epoch=best_epoch, best_map=best_focal)
+    predict_and_store(valid_loader, model, valid_dataset.img_ids_cell, mitotic_idx=mitotic_spindle_class_i,
+                      ouput_path=f'../output/mitotic_pred_fold_{args.fold}.csv')
 
 
-def train(train_loader, model, criterion, optimizer, epoch, clipnorm=1, lr=1e-5, agg_steps=1):
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    accuracy = AverageMeter()
+def predict_and_store(valid_loader, model, img_ids_cell, mitotic_idx, ouput_path):
 
-    # switch to train mode
-    model.train()
-
-    num_its = len(train_loader)
-    end = time.time()
-    iter = 0
-    print_freq = 1
-    optimizer.zero_grad()
-    for iter, iter_data in enumerate(train_loader, 0):
-        # measure data loading time
-        data_time.update(time.time() - end)
-
-        images, labels, indices = iter_data
-
-        images = Variable(images.cuda())
-        labels = Variable(labels.cuda())
-
-        outputs = model(images)
-        loss = criterion(outputs, labels, epoch=epoch)
-
-        losses.update(loss.item())
-        loss.backward()
-
-        if iter % agg_steps == 0:
-            torch.nn.utils.clip_grad_norm(model.parameters(), clipnorm)
-            optimizer.step()
-            # zero out gradients so we can accumulate new ones over batches
-            optimizer.zero_grad()
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        logits = outputs
-        probs = F.sigmoid(logits)
-        acc = multi_class_acc(probs, labels)
-        accuracy.update(acc)
-
-        if (iter + 1) % print_freq == 0 or iter == 0 or (iter + 1) == num_its:
-            print('\r%5.1f   %5d    %0.6f   |  %0.4f  %0.4f  | ... ' % \
-                  (epoch - 1 + (iter + 1) / num_its, iter + 1, lr, losses.avg, accuracy.avg),
-                  end='', flush=True)
-
-    return iter, losses.avg, accuracy.avg
-
-
-def validate(valid_loader, model, criterion, epoch, log, focal_loss=FocalLoss().cuda()):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    accuracy = AverageMeter()
-
-    # switch to evaluate mode
     model.eval()
 
     probs_list = []
     labels_list = []
-    logits_list = []
 
-    end = time.time()
     for it, iter_data in enumerate(valid_loader, 0):
         images, labels, indices = iter_data
         images = Variable(images.cuda())
         labels = Variable(labels.cuda())
 
         outputs = model(images)
-        loss = criterion(outputs, labels, epoch=epoch)
 
         logits = outputs
         probs = F.sigmoid(logits)
 
-        if np.random.rand() < 0.005:
-            for prob, label in zip(probs, labels):
-                if np.random.rand() < 0.001:
-                    print('printing pred vs. label')
-                    for p, l in zip(prob.cpu().detach().numpy(), label.cpu().detach().numpy()):
-                        print(p, l)
-                    print('-' * 30)
-
-        acc = multi_class_acc(probs, labels)
 
         probs_list.append(probs.cpu().detach().numpy())
         labels_list.append(labels.cpu().detach().numpy())
-        logits_list.append(logits.cpu().detach().numpy())
-
-        losses.update(loss.item())
-        accuracy.update(acc)
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
 
     probs = np.vstack(probs_list)
-    y_true = np.vstack(labels_list)
 
-    logits = np.vstack(logits_list)
-    valid_focal_loss = focal_loss.forward(torch.from_numpy(logits), torch.from_numpy(y_true))
+    results_df = pd.DataFrame({'ID': [x[0] for x in img_ids_cell], 'cell_i': [x[1] for x in img_ids_cell],
+                               'pred': [prob[mitotic_idx] for prob in probs]})
+    results_df.to_csv(ouput_path, index=None)
 
-    class_names = get_class_names()
-    y_true_bin = np.zeros_like(y_true)
-    y_true_bin[y_true > 0.5] = 1
-    map_scores = average_precision_score(y_true_bin, probs, average=None)
-    for class_name, map_score in zip(class_names, map_scores):
-        log.write(f'{class_name}: {map_score:.2f}\n')
-
-    return losses.avg, accuracy.avg, valid_focal_loss, np.nanmean(map_scores)
-
-
-def save_model(model, is_best, model_out_dir, optimizer=None, epoch=None, best_epoch=None, best_map=None):
-    if type(model) == DataParallel:
-        state_dict = model.module.state_dict()
-    else:
-        state_dict = model.state_dict()
-    for key in state_dict.keys():
-        state_dict[key] = state_dict[key].cpu()
-
-    model_fpath = os.path.join(model_out_dir, '%03d.pth' % epoch)
-    torch.save({
-        'save_dir': model_out_dir,
-        'state_dict': state_dict,
-        'best_epoch': best_epoch,
-        'epoch': epoch,
-        'best_map': best_map,
-    }, model_fpath)
-
-    optim_fpath = os.path.join(model_out_dir, '%03d_optim.pth' % epoch)
-    if optimizer is not None:
-        torch.save({
-            'optimizer': optimizer.state_dict(),
-        }, optim_fpath)
-
-    if is_best:
-        best_model_fpath = os.path.join(model_out_dir, 'final.pth')
-        shutil.copyfile(model_fpath, best_model_fpath)
-        if optimizer is not None:
-            best_optim_fpath = os.path.join(model_out_dir, 'final_optim.pth')
-            shutil.copyfile(optim_fpath, best_optim_fpath)
-
-def multi_class_acc(preds, targs, th=0.5, int_labels=False):
-    if int_labels:
-        preds = (preds > th).int()
-        targs = (targs > th).int()
-        return (preds == targs).float().mean()
-    bins = np.arange(0, 1, 0.05)
-    preds = np.digitize(preds.cpu().detach().numpy(), bins=bins)
-    targs = np.digitize(targs.cpu().detach().numpy(), bins=bins)
-    return (preds == targs).mean()
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0.
-        self.avg = 0.
-        self.sum = 0.
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
 
 if __name__ == '__main__':
     print('%s: calling main function ... \n' % os.path.basename(__file__))

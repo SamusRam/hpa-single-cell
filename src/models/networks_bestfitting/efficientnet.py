@@ -60,6 +60,10 @@ class Efficient(nn.Module):
             self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
+        mean = [0.485, 0.456, 0.406, 0.406]  # rgby
+        std = [0.229, 0.224, 0.225, 0.225]
+        for i in range(4):
+            x[:, i, :, :] = (x[:, i, :, :] - mean[i]) / std[i]
         x = self.net.extract_features(x)
         if self.dropout:
             x = torch.cat((nn.AdaptiveAvgPool2d(1)(x), nn.AdaptiveMaxPool2d(1)(x)), dim=1)
