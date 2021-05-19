@@ -47,7 +47,8 @@ label noise."
      ![](readme_figures/Mitotic_labels_denoised.png)
      
      Below are some added mitotic spindle labels, where initial pseudo-labels were below 0.4.
-     I scaled de-noised labels to [0, 1] range. 
+     For image titles I scaled the de-noised labels to [0, 1] range. 
+     
      ![](readme_figures/mitotic_added_with_labels.png)
      
      *After the end of the competition I checked if the outputs of the de-noising can be used to remove mitotic spindle labels. However, the per-sample labeling described above obviously resulted in the missed cells (false negatives), but false positives were not the major label noise.*
