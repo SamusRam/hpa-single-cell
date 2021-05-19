@@ -69,7 +69,7 @@ class DensenetClass(nn.Module):
             self.bn2 = nn.BatchNorm1d(num_features)
             self.relu = nn.ReLU(inplace=True)
 
-        if pretrained_file is not None and False:
+        if pretrained_file is not None:
             final_pretrained = torch.load(pretrained_file)
             prev_class_name_indices = get_new_class_name_indices_in_prev_comp_data()
             prev_class_name_indices += [27, 27]
