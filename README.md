@@ -5,6 +5,7 @@ The challenge was hosted on [Kaggle](https://www.kaggle.com/c/hpa-single-cell-im
 
 The competition was about a fascinating but challenging task to learn single-cell patterns out of noisy image-level labels while enhancing cell segmentation in terms of accuracy and computational efficiency. 
 For illustration purposes, here is an output of my model for a test image:
+
 ![](readme_figures/hpa_demo.png)
 
 ## Position
@@ -42,6 +43,7 @@ label noise."
      The algorithm from the paper enforces label sparsity so that each object would have a 
      single confident label after the de-noising. Therefore, outputs of the de-noising were not used directly. 
      I focused on the group of cells having the highest mode in the de-noised soft labels for mitotic spindle, as mitotic spindle turned out to be the most challenging class (due to rare occurrence and the per-sample labeling of images described above). As a result, I've added mitotic spindle label to around 500 cells from the highest de-noised values:
+     
      ![](readme_figures/Mitotic_labels_denoised.png)
      
      Below are some added mitotic spindle labels, where initial pseudo-labels were below 0.4.
