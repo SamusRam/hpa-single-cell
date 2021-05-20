@@ -54,10 +54,10 @@ label noise."
      *After the end of the competition I checked if the outputs of the de-noising can be used to remove mitotic spindle labels. However, the per-sample labeling described above obviously resulted in the missed cells (false negatives), but false positives were not the major label noise.*
  - I designed my solution for the high single-cell variation (SCV) scenario. 
    - I avoided heuristical re-ranking based on image-level labels in order to limit influence of image-level labels on individual cells. *Even though initially I leveraged image-level predictions to heuristically
- rank individual cell predictions, e.g. in [my public notebook I shared with the community in the beginning of the competition](https://www.kaggle.com/samusram/hpa-rgb-model-rgby-cell-level-classification). But then I decided to be rigorously focus on high SCV.*
-   - When predicting a single cell, I masked all surrounding cells out, so that in the high SCV scenario predictions would not be influenced by neighboring cells in the bounding box.
+ rank individual cell predictions, e.g. in [my public notebook I shared with the community in the beginning of the competition](https://www.kaggle.com/samusram/hpa-rgb-model-rgby-cell-level-classification). But then I decided to be rigorously focused on the high SCV.*
+   - When predicting a single cell, I masked all surrounding cells out, so that in the high SCV scenario predictions would not be wrongly influenced by neighboring cells in the bounding box.
    
-   *In the end, based on the community comments, it seems that both these high-SCV-focused design choices led to worse leaderboard score, suggesting that in the test set there were not so many high SCV cases.*
+   *In the end, based on the community comments, it seems that both these high-SCV-focused design choices led to worse leaderboard score, suggesting that in the test set there were not so many high SCV cases and predictions from neighbouring cells actually supported correct single-cell labels.*
  - I improved computational efficiency of the segmentation library provided by the competition hosts (the optimized version was [shared early in the competition](https://www.kaggle.com/samusram/even-faster-hpa-cell-segmentation) and reportedly was leveraged by multiple top-performing teams).
  I also included minor improvements like filtering of small nuclei based on median size of nuclei in the given image instead of the hardcoded threshold, I also removed smaller border cells.
  - I estimated negative label probability as 
