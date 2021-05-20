@@ -165,6 +165,7 @@ positive_denoised_threshold = Y_opt[:, class_i].max()*0.92
 addition_bool_idx = ((Y_init[:, class_i]  < negative_init_label_threshold) & 
               (Y_opt[:, class_i] >= positive_denoised_threshold))
 ```
+Then please put the picked positive cells in the file `../input/mitotic_cells_selection.csv`. The csv file must contain columns `ID,cell_i` where cell_i corresponds to the stored masked cell bounding boxes.
 
 #### Cell-level training
 
