@@ -26,8 +26,8 @@ My team was named Raman, I competed solo ([CV](https://drive.google.com/file/d/1
    - **Problem: Image-level label uncertainty**. *" The image-level labels are what we refer to as weak or noisy. During annotation, the image-level labels are set per sample (i.e per a group of up to 6 images from the same sample). This means that the labels present in the majority of the images will be annotated." ([by Prof. Emma Lundberg](https://www.kaggle.com/c/hpa-single-cell-image-classification/discussion/220748#1213064))*
    - **Solutions**: 
      - *gradient accumulation over 200 batches when training on image-level labels*. 
-     **Rationale**: motivated by Google's paper ["Don't decay the learning rate, increase the batch size" by Smith, Samuel L., et al.](https://arxiv.org/pdf/1711.00489.pdf). The paper demonstrates that large batch sizes tend to average out label noise and lead to better model performance. According to the paper, to achieve that, large batch size should be used in later stages of training, because in the beginning of training noisy updates of weights help to avoid local minima of the loss function.
-      I started with the weights pre-trained specifically on the HPA dataset. Therefore, I did not have to first pre-train the net with a smaller batch size, 
+     **Rationale**: motivated by Google's paper ["Don't decay the learning rate, increase the batch size" by Smith, Samuel L., et al.](https://arxiv.org/pdf/1711.00489.pdf). The paper demonstrates that large batch sizes tend to average out label noise and lead to better model performance. According to the paper, to achieve that, large batch size should be used in later stages of training, because in the beginning of training, noisy updates of weights help to avoid local minima of the loss function.
+      I started with the weights pre-trained specifically on the HPA dataset. Therefore, I did not have to first train the net with a smaller batch size, 
       I used large batch size straight away. To achieve large batch size on a GPU with modest memory, I accumulated gradients over 200 batches, 
       which led to effective batch size of 1600.
      - *pseudo-labeling individual cells using the image-level model trained with gradient accumulation*.
@@ -40,6 +40,7 @@ label noise."
      **Rationale**: I implemented and leveraged the algorithm from the relevant paper ["Learning from Weak and Noisy Labels for Semantic Segmentation" by Lu, Zhiwu, et al.](https://qmro.qmul.ac.uk/xmlui/bitstream/handle/123456789/12661/imparsing_final.pdf?sequence=1&amp;isAllowed=y). 
      The main idea how to leverage graph signal de-noising is depicted in the figure below:
      ![](readme_figures/graph_denoising_github.svg)
+     
      The algorithm from the paper enforces label sparsity so that each object would have a 
      single confident label after the de-noising. Therefore, outputs of the de-noising were not used directly. 
      I focused on the group of cells having the highest mode in the de-noised soft labels for mitotic spindle, as mitotic spindle turned out to be the most challenging class (due to rare occurrence and the per-sample labeling of images described above). As a result, I've added mitotic spindle label to around 500 cells from the highest de-noised values:
@@ -55,7 +56,7 @@ label noise."
  - I designed my solution for the high single-cell variation (SCV) scenario. 
    - I avoided heuristical re-ranking based on image-level labels in order to limit influence of image-level labels on individual cells. *Even though initially I leveraged image-level predictions to heuristically
  rank individual cell predictions, e.g. in [my public notebook I shared with the community in the beginning of the competition](https://www.kaggle.com/samusram/hpa-rgb-model-rgby-cell-level-classification). But then I decided to be rigorously focused on the high SCV.*
-   - When predicting a single cell, I masked all surrounding cells out, so that in the high SCV scenario predictions would not be wrongly influenced by neighboring cells in the bounding box.
+   - When predicting a single cell, I masked all surrounding cells out, so that in the high SCV scenario, predictions would not be wrongly influenced by neighboring cells in the bounding box.
    
    *In the end, based on the community comments, it seems that both these high-SCV-focused design choices led to worse leaderboard score, suggesting that in the test set there were not so many high SCV cases and predictions from neighbouring cells actually supported correct single-cell labels.*
  - I improved computational efficiency of the segmentation library provided by the competition hosts (the optimized version was [shared early in the competition](https://www.kaggle.com/samusram/even-faster-hpa-cell-segmentation) and reportedly was leveraged by multiple top-performing teams).
@@ -151,7 +152,7 @@ python -m src.preprocessing.unify_embeddings_from_image_level_densenet
 # there are 3 folds only (different folds, please, see explanation above)
 python -m src.denoising.graph_denoising --fold 0
 ```
-The results are to be manually investigated. It should straightforward to load outputs of the script `src.denoising.graph_denoising` and select candidate cells of interest, e.g.,
+The results are to be manually investigated. It should be straightforward to load outputs of the script `src.denoising.graph_denoising` and select candidate cells of interest, e.g.,
 ```
 
 # Y_init contains labels before application of de-noising
