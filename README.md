@@ -73,7 +73,7 @@ Estimating P_{neg} this way instead of trying to predict the negative label boos
  - My main loss function was focal loss, both for initial image-level labels as well as soft pseudo labels. Analogously to the winning solution to the [previous Human Protein Atlas competition](https://www.kaggle.com/c/human-protein-atlas-image-classification) by [bestfitting](https://www.kaggle.com/bestfitting), I used hard negatives mining loss and Lovasz hinge loss (treating the 19 labels as 19 pixels for the Lovasz loss).
  - I split data into 5 folds using multi-label stratified k-fold split from [this library](https://github.com/trent-b/iterative-stratification).
  - I defined manual learning rate schedules, the schedules were not optimized based on the leaderboard/validation performance.
- - For image-level model I used validation focal loss to select the best checkpoints, while for the cell-level model trained on de-noised soft labels I used validation accuracy, where accuracy was computed per 0.05-wide bins. E.g., if a soft label was 0.23, then predictions in the interval [0.20, 0.25] where considered a hit.
+ - When training on image-level labels I used validation focal loss to select the best checkpoints, when training on cell-level de-noised soft labels I used validation accuracy, where accuracy was computed per 0.05-wide bins. E.g., if a soft label was 0.23, then predictions in the interval [0.20, 0.25] where considered a hit.
  - I used public HPA data downloaded using [code shared by the competition hosts](https://www.kaggle.com/lnhtrang/hpa-public-data-download-and-hpacellseg).
  - I used 8 bit images, the image-level model worked with 1024x1024 images, and the cell-level model worked with 512x512 images.
 
