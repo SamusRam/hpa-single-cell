@@ -38,7 +38,7 @@ N_NEIGHBS = args.num_graph_neighbours
 N_EIGENVECTORS = args.num_eigenvectors
 OUTPUT_PATH = args.output_path
 if OUTPUT_PATH is None:
-    OUTPUT_PATH = f'../output/denoising_{FOLD_I}_{time.strftime("%Y%m%d_%H%M%S")}'
+    OUTPUT_PATH = f'output/denoising_{FOLD_I}_{time.strftime("%Y%m%d_%H%M%S")}'
 if not os.path.exists(OUTPUT_PATH):
     os.makedirs(OUTPUT_PATH)
 PRECOMPUTED_KNN_GRAPH = args.precomputed_knn_graph_path
@@ -71,20 +71,11 @@ for img_base_path in trn_basepath_2_ohe_vector.keys():
     img_id_2_base_path[img_id] = img_base_path
 
 class_names = get_class_names() + ['Nothing there']
-# # (img id, mask_i) 2 emb path
-# img_id_2_emb_path = dict()
-#
-# for root_path in ['../input/bestfitting_densenet_embs_train/', '../input/bestfitting_densenet_embs_public/']:
-#     trn_embs = [os.path.splitext(x)[0] for x in os.listdir(root_path)]
-#
-#     for id_mask in trn_embs:
-#         img_id, mask_i = id_mask.split('__')
-#         img_id_2_emb_path[(img_id, int(mask_i))] = os.path.join(root_path, id_mask)
-all_embs_df = pd.read_parquet('../output/densenet121_embs.parquet')
-all_preds_df = pd.read_hdf('../output/densenet121_pred.h5')
+all_embs_df = pd.read_parquet('output/densenet121_embs.parquet')
+all_preds_df = pd.read_hdf('output/densenet121_pred.h5')
 
-cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
-cherrypicked_aggresome = pd.read_csv('../input/aggressome_cells_selection.csv')
+cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
+cherrypicked_aggresome = pd.read_csv('input/aggressome_cells_selection.csv')
 cherrypicked_mitotic_spindle_img_cell = set(cherrypicked_mitotic_spindle[['ID', 'cell_i']].apply(tuple, axis=1).values)
 cherrypicked_aggresome_img_cell = set(cherrypicked_aggresome[['ID', 'cell_i']].apply(tuple, axis=1).values)
 
@@ -93,7 +84,7 @@ aggresome_class_i = class_names.index('Aggresome')
 
 
 # folds
-with open('../input/denoisining_folds.pkl', 'rb') as f:
+with open('input/denoisining_folds.pkl', 'rb') as f:
     fold_2_imgId_2_maskIndices = pickle.load(f)
 
 # ## fold encodings, labels, ids

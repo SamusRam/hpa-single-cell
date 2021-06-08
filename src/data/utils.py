@@ -30,7 +30,7 @@ def get_class_names():
     return class_names
 
 
-def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classification', class_names=None,
+def get_train_df_ohe(root_folder_path='input/hpa-single-cell-image-classification', class_names=None,
                      clean_from_duplicates=False, clean_mitotic=False, clean_aggresome=False):
     train_df = pd.read_csv(os.path.join(root_folder_path, 'train.csv'))
 
@@ -43,7 +43,7 @@ def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classifica
         train_df[class_name] = train_df['Label'].map(lambda x: 1 if class_i in x else 0)
 
     if clean_from_duplicates:
-        duplicates = pd.read_csv('../output/duplicates.csv.gz')
+        duplicates = pd.read_csv('output/duplicates.csv.gz')
         forbidden_basepaths = set(duplicates['Extra'].values)
         for needed_id in ['5d36256a-bbbe-11e8-b2ba-ac1f6b6435d0',
                           '68d5cd28-bbc6-11e8-b2bc-ac1f6b6435d0',
@@ -51,16 +51,16 @@ def get_train_df_ohe(root_folder_path='../input/hpa-single-cell-image-classifica
                           '1469d230-bbc5-11e8-b2bc-ac1f6b6435d0',
                           '78411ae2-bbc6-11e8-b2bc-ac1f6b6435d0',
                           '14b5422c-bbbd-11e8-b2ba-ac1f6b6435d0']:
-            forbidden_basepaths.remove(f'../input/hpa-single-cell-image-classification/train/{needed_id}')
+            forbidden_basepaths.remove(f'input/hpa-single-cell-image-classification/train/{needed_id}')
         train_df = train_df[~train_df['img_base_path'].isin(forbidden_basepaths)]
 
     if clean_mitotic:
-        cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+        cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
         checked_mitotic_ids = set(cherrypicked_mitotic_spindle['ID'].values)
         train_df = train_df[(train_df['Mitotic spindle'] == 0) | (train_df['ID'].isin(checked_mitotic_ids))]
 
     if clean_aggresome:
-        aggresome_blacklist_ids = set(pd.read_csv('../input/aggresome_blacklist.csv')['ID'].values)
+        aggresome_blacklist_ids = set(pd.read_csv('input/aggresome_blacklist.csv')['ID'].values)
         train_df = train_df[(train_df['Aggresome'] == 0) | np.logical_not(train_df['ID'].isin(aggresome_blacklist_ids))]
     return train_df[['ID', 'img_base_path'] + class_names]
 
@@ -72,8 +72,8 @@ def are_all_imgs_present(base_path):
     return True
 
 
-def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_names=None,
-                      imgs_root_path='../input/publichpa_1024', clean_from_duplicates=False,
+def get_public_df_ohe(public_info_df_path='input/kaggle_2021.tsv', class_names=None,
+                      imgs_root_path='input/publichpa_1024', clean_from_duplicates=False,
                       clean_mitotic=False, clean_aggresome=False):
     if class_names is None:
         class_names = get_class_names()
@@ -107,18 +107,18 @@ def get_public_df_ohe(public_info_df_path='../input/kaggle_2021.tsv', class_name
     forbidden_ids = {'1835_D1_3'}
     public_hpa_df_17 = public_hpa_df_17[~public_hpa_df_17['ID'].isin(forbidden_ids)]
     if clean_from_duplicates:
-        duplicates = pd.read_csv('../output/duplicates.csv.gz')
+        duplicates = pd.read_csv('output/duplicates.csv.gz')
         forbidden_basepaths = set(duplicates['Extra'].values)
         public_hpa_df_17 = public_hpa_df_17[~public_hpa_df_17['img_base_path'].isin(forbidden_basepaths)]
 
     if clean_mitotic:
-        cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+        cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
         checked_mitotic_ids = set(cherrypicked_mitotic_spindle['ID'].values)
         public_hpa_df_17 = public_hpa_df_17[
             (public_hpa_df_17['Mitotic spindle'] == 0) | (public_hpa_df_17['ID'].isin(checked_mitotic_ids))]
 
     if clean_aggresome:
-        aggresome_blacklist_ids = set(pd.read_csv('../input/aggresome_blacklist.csv')['ID'].values)
+        aggresome_blacklist_ids = set(pd.read_csv('input/aggresome_blacklist.csv')['ID'].values)
         public_hpa_df_17 = public_hpa_df_17[
             (public_hpa_df_17['Aggresome'] == 0) | np.logical_not(public_hpa_df_17['ID'].isin(aggresome_blacklist_ids))]
 
@@ -131,10 +131,10 @@ def get_masks_precomputed(img_paths, masks_root):
     # return cell_masks
 
 
-def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-image-classification/train',
-                       base_public_path='../input/publichpa_1024',
-                       trn_cell_boxes_path='../input/cell_bboxes_train',
-                       public_cell_boxes_path='../input/cell_bboxes_public',
+def get_cells_from_img(img_base_path, base_trn_path='input/hpa-single-cell-image-classification/train',
+                       base_public_path='input/publichpa_1024',
+                       trn_cell_boxes_path='input/cell_bboxes_train',
+                       public_cell_boxes_path='input/cell_bboxes_public',
                        cell_img_size=512, return_raw=False, sample_size=None, cell_labels_df=None,
                        target_img_size=None):
     assert not return_raw or target_img_size is not None, 'when returning_raw target_img_size must be specified'
@@ -206,10 +206,10 @@ def get_cells_from_img(img_base_path, base_trn_path='../input/hpa-single-cell-im
 
 
 # TODO: refactor get_cell_img, get_cells_from_img, get_cell_img_with_mask
-def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-image-classification/train',
-                 base_public_path='../input/publichpa_1024',
-                 trn_cell_boxes_path='../input/cell_bboxes_train',
-                 public_cell_boxes_path='../input/cell_bboxes_public',
+def get_cell_img(img_base_path, cell_i, base_trn_path='input/hpa-single-cell-image-classification/train',
+                 base_public_path='input/publichpa_1024',
+                 trn_cell_boxes_path='input/cell_bboxes_train',
+                 public_cell_boxes_path='input/cell_bboxes_public',
                  cell_img_size=512, aug=None, target_raw_img_size=None):
     " cell_i must be 0-based "
 
@@ -222,12 +222,6 @@ def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-
     img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
 
     row = bboxes_df.loc[cell_i + 1]
-    # except:
-    #     print('img_base_path', img_base_path)
-    #     print('bboxes_df', bboxes_df)
-    #     labels_df = pd.read_hdf('../output/image_level_labels.h5')
-    #     print('labels_df', labels_df.loc[img_base_path])
-
     img_cell = img_rgby[row['y_min']:row['y_max'], row['x_min']:row['x_max'], :].copy()
     img_cell[row['cell_rows_del'], row['cell_cols_del'], :] = 0
 
@@ -270,10 +264,10 @@ def get_cell_img(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-
     return img_cell
 
 
-def get_cell_img_mitotic(img_base_path, cell_i, base_trn_path='../input/hpa-single-cell-image-classification/train',
-                 base_public_path='../input/publichpa_1024',
-                 trn_cell_boxes_path='../input/cell_bboxes_train',
-                 public_cell_boxes_path='../input/cell_bboxes_public',
+def get_cell_img_mitotic(img_base_path, cell_i, base_trn_path='input/hpa-single-cell-image-classification/train',
+                 base_public_path='input/publichpa_1024',
+                 trn_cell_boxes_path='input/cell_bboxes_train',
+                 public_cell_boxes_path='input/cell_bboxes_public',
                  cell_img_size=224, aug=None, target_raw_img_size=None):
     " cell_i must be 0-based "
 
@@ -286,12 +280,6 @@ def get_cell_img_mitotic(img_base_path, cell_i, base_trn_path='../input/hpa-sing
     img_rgby = open_rgby(img_id, folder_root=base_trn_path if is_from_train else base_public_path)
 
     row = bboxes_df.loc[cell_i + 1]
-    # except:
-    #     print('img_base_path', img_base_path)
-    #     print('bboxes_df', bboxes_df)
-    #     labels_df = pd.read_hdf('../output/image_level_labels.h5')
-    #     print('labels_df', labels_df.loc[img_base_path])
-
     y_min = row['y_min']
     y_max = row['y_max']
     x_min = row['x_min']
@@ -361,7 +349,7 @@ def get_cell_copied(cell_img, augmentations=[], height=1024, width=1024):
 
 
 def open_rgb(image_id,
-             folder_root='../input/hpa-single-cell-image-classification/train'):  # a function that reads RGB image
+             folder_root='input/hpa-single-cell-image-classification/train'):  # a function that reads RGB image
     colors = ['red', 'green', 'blue']
     img = [cv2.imread(f'{folder_root}/{image_id}_{color}.png', cv2.IMREAD_GRAYSCALE)
            for color in colors]
@@ -370,7 +358,7 @@ def open_rgb(image_id,
 
 
 def open_rgby(image_id,
-              folder_root='../input/hpa-single-cell-image-classification/train'):  # a function that reads RGBY image
+              folder_root='input/hpa-single-cell-image-classification/train'):  # a function that reads RGBY image
     colors = ['red', 'green', 'blue', 'yellow']
     img = [cv2.imread(f'{folder_root}/{image_id}_{color}.png', cv2.IMREAD_GRAYSCALE)
            for color in colors]
@@ -450,9 +438,9 @@ def get_new_class_name_indices_in_prev_comp_data():
 
 def get_cell_img_with_mask(img_id, cell_i, is_public_data, return_mask=True, target_img_size=1024):
     img_rgby = open_rgby(img_id,
-                         folder_root='../input/publichpa_1024/' if is_public_data else '../input/hpa-single-cell-image-classification/train')
+                         folder_root='input/publichpa_1024/' if is_public_data else 'input/hpa-single-cell-image-classification/train')
     scale_factor = target_img_size / img_rgby.shape[0]
-    bboxes_path_root = '../input/cell_bboxes_public' if is_public_data else '../input/cell_bboxes_train'
+    bboxes_path_root = 'input/cell_bboxes_public' if is_public_data else 'input/cell_bboxes_train'
     bboxes_path = os.path.join(bboxes_path_root, f'{img_id}.pkl')
     bboxes_df = pd.read_pickle(bboxes_path)
 

@@ -20,7 +20,7 @@ import multiprocessing
 
 
 parser = argparse.ArgumentParser(description='PyTorch Protein Classification')
-parser.add_argument('--model-folds-dir', default='../output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6', type=str, help='destination where trained network should be saved')
+parser.add_argument('--model-folds-dir', default='output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6', type=str, help='destination where trained network should be saved')
 parser.add_argument('--gpu-id', default='0', type=str, help='gpu id used for training (default: 0)')
 parser.add_argument('--arch', default='class_densenet121_large_dropout', type=str,
                     help='model architecture (default: class_densenet121_large_dropout)')
@@ -78,7 +78,7 @@ def main():
         embs_extractor = BestfittingEncodingsModel(model_)
         models_features.append(embs_extractor)
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
 
     vert_flip = VerticalFlip(always_apply=True)

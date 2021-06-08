@@ -21,7 +21,7 @@ def main():
     num_folds = args.num_folds
     fold_single = args.fold_single
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
 
     embs_output = 'output/densenet121_embs'
@@ -48,7 +48,7 @@ def main():
             all_embs_list.append(image_level_embs_df)
 
     all_embs_df = pd.concat(all_embs_list)
-    all_embs_df.to_parquet('../output/densenet121_embs.parquet')
+    all_embs_df.to_parquet('output/densenet121_embs.parquet')
 
 
 if __name__ == '__main__':

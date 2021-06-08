@@ -18,8 +18,8 @@ NUM_CLASSES   = 19
 ID            = 'Id'
 PREDICTED     = 'Predicted'
 TARGET        = 'Target'
-RESULT_DIR = '../output'
-PRETRAINED_DIR = '../input/pretrained_models/models'
+RESULT_DIR = 'output'
+PRETRAINED_DIR = 'input/pretrained_models/models'
 
 
 LABEL_NAMES = {

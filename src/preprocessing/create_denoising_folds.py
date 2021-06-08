@@ -49,8 +49,8 @@ def get_id_2_masks(precomputed_masks_path):
     return id_2_mask_indices
 
 
-id_2_mask_indices = get_id_2_masks('../input/cell_bboxes_train')
-id_2_mask_indices_public = get_id_2_masks('../input/cell_bboxes_public')
+id_2_mask_indices = get_id_2_masks('input/cell_bboxes_train')
+id_2_mask_indices_public = get_id_2_masks('input/cell_bboxes_public')
 id_2_mask_indices.update(id_2_mask_indices_public)
 
 
@@ -82,5 +82,5 @@ for fold_i in range(N_FOLDS):
         size += len(masks)
     print(f'Fold {fold_i}: {size}')
 
-with open('../input/denoisining_folds.pkl', 'wb') as f:
+with open('input/denoisining_folds.pkl', 'wb') as f:
     pickle.dump(fold_2_imgId_2_maskIndices, f)

@@ -17,10 +17,10 @@ parser.add_argument("--n-folds", default=5, type=int)
 args = parser.parse_args()
 OBVIOUS_STAINING_FLAG = args.obvious_staining
 
-with open(f'../input/negs_with_{"obvious_" if OBVIOUS_STAINING_FLAG else ""}staining_public.pkl', 'rb') as f:
+with open(f'input/negs_with_{"obvious_" if OBVIOUS_STAINING_FLAG else ""}staining_public.pkl', 'rb') as f:
     negs_with_staining_pub = pickle.load(f)
 negs_with_staining_pub_ids = {img_id_mask_i.split('__')[0] for img_id_mask_i in negs_with_staining_pub}
-with open(f'../input/negs_with_{"obvious_" if OBVIOUS_STAINING_FLAG else ""}staining.pkl', 'rb') as f:
+with open(f'input/negs_with_{"obvious_" if OBVIOUS_STAINING_FLAG else ""}staining.pkl', 'rb') as f:
     negs_with_staining = pickle.load(f)
 negs_with_staining_ids = {img_id_mask_i.split('__')[0] for img_id_mask_i in negs_with_staining}
 
@@ -59,7 +59,7 @@ for item in g.get_xticklabels():
 g.set_title('Train Images', fontsize=24)
 g.set_xlabel('Class', fontsize=17)
 g.set_ylabel('Number of Images', fontsize=17)
-plt.savefig(f'../output/image_level_labels{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}.png')
+plt.savefig(f'output/image_level_labels{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}.png')
 
 # splitting
 label_combinations = list(basepath_2_ohe_vector.values())
@@ -71,5 +71,5 @@ for trn_indices, val_indices in kf.split(img_paths_to_split_into_folds, y=label_
     val_paths = [img_paths_to_split_into_folds[i] for i in val_indices]
     folds.append([trn_paths, val_paths])
 
-with open(f'../input/imagelevel_folds{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}_{args.n_folds}.pkl', 'wb') as f:
+with open(f'input/imagelevel_folds{"_obvious_staining" if OBVIOUS_STAINING_FLAG else ""}_{args.n_folds}.pkl', 'wb') as f:
     pickle.dump(folds, f)

@@ -107,7 +107,7 @@ def main():
     # state_dict = model.state_dict()
     # torch.save({
     #     'state_dict': state_dict
-    # }, '../output/densenet121_bestfitting_converted_classes.h5')
+    # }, 'output/densenet121_bestfitting_converted_classes.h5')
     # sys.exit(0)
     # move network to gpu
     # model = DataParallel(model)
@@ -166,7 +166,7 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]
@@ -207,10 +207,10 @@ def main():
         train_ids = {os.path.basename(x) for x in trn_img_paths}
         id_2_ohe_vector = {os.path.basename(path): ohe for path, ohe in basepath_2_ohe_vector.items()}
 
-        cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+        cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
         cherrypicked_mitotic_spindle = cherrypicked_mitotic_spindle[cherrypicked_mitotic_spindle['ID'].isin(train_ids)]
 
-        cherrypicked_aggresome = pd.read_csv('../input/aggressome_cells_selection.csv')
+        cherrypicked_aggresome = pd.read_csv('input/aggressome_cells_selection.csv')
         cherrypicked_aggresome = cherrypicked_aggresome[cherrypicked_aggresome['ID'].isin(train_ids)]
 
         cherrypicked_mitotic_spindle['ohe'] = cherrypicked_mitotic_spindle['ID'].map(id_2_ohe_vector)

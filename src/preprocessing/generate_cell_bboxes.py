@@ -41,9 +41,8 @@ os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 BATCH_SIZE = 2
 NUM_CORES = multiprocessing.cpu_count()
 PUBLIC_DATA_FLAG = args.public_data
-PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
-OUTPUT_PATH = '../input/cell_bboxes_public' if PUBLIC_DATA_FLAG else '../input/cell_bboxes_train'
-IMGS_FOLDER = '../input/publichpa_1024' if PUBLIC_DATA_FLAG else '../input/hpa-single-cell-image-classification/train'
+OUTPUT_PATH = 'input/cell_bboxes_public' if PUBLIC_DATA_FLAG else 'input/cell_bboxes_train'
+IMGS_FOLDER = 'input/publichpa_1024' if PUBLIC_DATA_FLAG else 'input/hpa-single-cell-image-classification/train'
 
 if not os.path.exists(OUTPUT_PATH):
     os.makedirs(OUTPUT_PATH)
@@ -51,8 +50,8 @@ if not os.path.exists(OUTPUT_PATH):
 main_df = get_public_df_ohe() if PUBLIC_DATA_FLAG else get_train_df_ohe()
 
 
-NUC_MODEL = '../input/hpacellsegmentatormodelweights/dpn_unet_nuclei_v1.pth'
-CELL_MODEL = '../input/hpacellsegmentatormodelweights/dpn_unet_cell_3ch_v1.pth'
+NUC_MODEL = 'input/hpacellsegmentatormodelweights/dpn_unet_nuclei_v1.pth'
+CELL_MODEL = 'input/hpacellsegmentatormodelweights/dpn_unet_cell_3ch_v1.pth'
 
 segmentator = cellsegmentator.CellSegmentator(
     NUC_MODEL,
@@ -95,11 +94,11 @@ def store_cells(img_ids, folder=IMGS_FOLDER,
         #         if min(height, width) <= 1:
         #             img_ids.append(file_name.replace('.pkl', ''))
 
-        with open('../output/bbox_pred_inconsistent_basepaths.pkl', 'rb') as f:
+        with open('output/bbox_pred_inconsistent_basepaths.pkl', 'rb') as f:
             img_ids = set([os.path.basename(x) for x in pickle.load(f)])
 
         img_ids = list(set(img_ids))
-        with open(f'../output/repaired_ids{"_public" if PUBLIC_DATA_FLAG else ""}.pkl', 'wb') as f:
+        with open(f'output/repaired_ids{"_public" if PUBLIC_DATA_FLAG else ""}.pkl', 'wb') as f:
             pickle.dump(img_ids, f)
         print(len(img_ids))
     else:
