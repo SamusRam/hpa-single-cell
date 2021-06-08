@@ -19,7 +19,7 @@ def imread_custom(img_basepath, color):
 
 # https://www.kaggle.com/c/human-protein-atlas-image-classification/discussion/72534
 def generate_hash(df, colors, dataset='train', imread_func=imread_custom, is_update=False):
-    cache_fname = f'../output/{dataset}_hash_maps.pkl'
+    cache_fname = f'output/{dataset}_hash_maps.pkl'
 
     hash_maps = {}
     for color in colors:
@@ -107,6 +107,6 @@ if __name__ == '__main__':
             df = df[df['Train'] != df['Extra']]
 
     print(df.shape)
-    df.to_csv('../output/duplicates.csv.gz', index=False, compression='gzip')
+    df.to_csv('output/duplicates.csv.gz', index=False, compression='gzip')
 
     print('\nsuccess!')

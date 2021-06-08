@@ -23,7 +23,7 @@ args = parser.parse_args()
 FOLD_I = args.fold
 OUTPUT_PATH = args.output_path
 if OUTPUT_PATH is None:
-    OUTPUT_PATH = f'../output/mitotic_neighbours_fold_{FOLD_I}.pkl'
+    OUTPUT_PATH = f'output/mitotic_neighbours_fold_{FOLD_I}.pkl'
 
 PRECOMPUTED_KNN_GRAPH = args.precomputed_knn_graph_path
 
@@ -54,16 +54,16 @@ for img_base_path in trn_basepath_2_ohe_vector.keys():
 
 class_names = get_class_names() + ['Nothing there']
 
-all_embs_df = pd.read_parquet('../output/densenet121_embs.parquet')
+all_embs_df = pd.read_parquet('output/densenet121_embs.parquet')
 
-cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
 cherrypicked_mitotic_spindle_img_cell = set(cherrypicked_mitotic_spindle[['ID', 'cell_i']].apply(tuple, axis=1).values)
 
 mitotic_spindle_class_i = class_names.index('Mitotic spindle')
 
 
 # folds
-with open('../input/denoisining_folds.pkl', 'rb') as f:
+with open('input/denoisining_folds.pkl', 'rb') as f:
     fold_2_imgId_2_maskIndices = pickle.load(f)
 
 # ## fold encodings, labels, ids

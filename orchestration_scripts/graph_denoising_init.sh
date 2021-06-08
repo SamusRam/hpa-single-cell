@@ -4,4 +4,4 @@ for fold_i in {0..2}; do
 done
 
 # manual mitotic selection
-#python -m src.denoising.mitotic_spindle_neighbours.py --fold 0 --precomputed-knn-graph-path ../output/denoising_0_20210422_084444/knn_graph_200.pkl
+#python -m src.denoising.mitotic_spindle_neighbours.py --fold 0 --precomputed-knn-graph-path output/denoising_0_20210422_084444/knn_graph_200.pkl

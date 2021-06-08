@@ -80,11 +80,11 @@ Estimating P_{neg} this way instead of trying to predict the negative label boos
 ### How to reproduce the result
 
 #### Downloading resources
- 1. Please, download the competition data from [the Kaggle page](https://www.kaggle.com/c/hpa-single-cell-image-classification/data) and place the data into a folder `../input/hpa-single-cell-image-classification`
- 2. Please, download the public HPA data using [code shared by the competition hosts](https://www.kaggle.com/lnhtrang/hpa-public-data-download-and-hpacellseg) and place the data into a folder `../input/publichpa_1024`
+ 1. Please, download the competition data from [the Kaggle page](https://www.kaggle.com/c/hpa-single-cell-image-classification/data) and place the data into a folder `input/hpa-single-cell-image-classification`
+ 2. Please, download the public HPA data using [code shared by the competition hosts](https://www.kaggle.com/lnhtrang/hpa-public-data-download-and-hpacellseg) and place the data into a folder `input/publichpa_1024`
     
     *Due to limited disk space, I downscaled the public data to 1024x1024*
- 3. Please, download the previous-HPA-competition model by [bestfitting](https://www.kaggle.com/bestfitting) from [here](https://kth.app.box.com/s/gw43cvngx6quknq8ana9um1xx3ajhi4a) and extract the models into a folder `../input/pretrained_models/models`.
+ 3. Please, download the previous-HPA-competition model by [bestfitting](https://www.kaggle.com/bestfitting) from [here](https://kth.app.box.com/s/gw43cvngx6quknq8ana9um1xx3ajhi4a) and extract the models into a folder `input/pretrained_models/models`.
 
 #### Data preparation
  1. Detection of negative patterns with strong staining.
@@ -128,7 +128,7 @@ fold_i=0
 python -m src.train.train_bestfitting --fold $fold_i --gpu-id 0 --img_size 1024 --batch_size 8 --workers 22 --gradient-accumulation-steps 200 --scheduler Adam10 --epochs 10 --scheduler-lr-multiplier 4 --out_dir densenet121_1024_all_data__obvious_neg__gradaccum_200__start_lr_4e5 --eval-at-start 
 
 # final super-low-learning-rate tuning
-python -m src.train.train_bestfitting --fold $fold_i --gpu-id 0 --img_size 1024 --batch_size 8 --workers 22 --gradient-accumulation-steps 20 --scheduler Adam10 --epochs 10 --scheduler-lr-multiplier 0.3 --out_dir densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6  --load-state-dict-path "../output/models/densenet121_1024_all_data__obvious_neg__gradaccum_200__start_lr_4e5/fold${fold_i}/final.pth" --eval-at-start"
+python -m src.train.train_bestfitting --fold $fold_i --gpu-id 0 --img_size 1024 --batch_size 8 --workers 22 --gradient-accumulation-steps 20 --scheduler Adam10 --epochs 10 --scheduler-lr-multiplier 0.3 --out_dir densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6  --load-state-dict-path "output/models/densenet121_1024_all_data__obvious_neg__gradaccum_200__start_lr_4e5/fold${fold_i}/final.pth" --eval-at-start"
 ```
 
 #### Pseudo-labeling
@@ -165,14 +165,14 @@ positive_denoised_threshold = Y_opt[:, class_i].max()*0.92
 addition_bool_idx = ((Y_init[:, class_i]  < negative_init_label_threshold) & 
               (Y_opt[:, class_i] >= positive_denoised_threshold))
 ```
-Then please put the picked positive cells in the file `../input/mitotic_cells_selection.csv`. The csv file must contain columns `ID,cell_i` where cell_i corresponds to the stored masked cell bounding boxes.
+Then please put the picked positive cells in the file `input/mitotic_cells_selection.csv`. The csv file must contain columns `ID,cell_i` where cell_i corresponds to the stored masked cell bounding boxes.
 
 #### Cell-level training
 
 
 ```
 fold_i=0
-python -m src.train.train_cellwise --fold $fold_i --gpu-id 0 --img_size 512 --batch_size 32 --workers 10 --gradient-accumulation-steps 4 --cell-level-labels-path ../output/densenet121_pred.h5 --scheduler Adam10 --epochs 5 --scheduler-lr-multiplier 4 --out_dir densenet121_512_cellwise__gradaccum_4__start_lr_4e5  --load-state-dict-path "../output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6/fold${fold_i}/final.pth" --loss FocalSymmetricLovaszHardLogLoss
+python -m src.train.train_cellwise --fold $fold_i --gpu-id 0 --img_size 512 --batch_size 32 --workers 10 --gradient-accumulation-steps 4 --cell-level-labels-path output/densenet121_pred.h5 --scheduler Adam10 --epochs 5 --scheduler-lr-multiplier 4 --out_dir densenet121_512_cellwise__gradaccum_4__start_lr_4e5  --load-state-dict-path "output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6/fold${fold_i}/final.pth" --loss FocalSymmetricLovaszHardLogLoss
 ```
 
 #### Overall time (with HPA public data included)

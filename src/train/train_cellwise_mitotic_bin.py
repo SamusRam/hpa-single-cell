@@ -53,7 +53,7 @@ parser.add_argument('--fold', default=0, type=int, help='index of fold (default:
 parser.add_argument('--clipnorm', default=1, type=int, help='clip grad norm')
 parser.add_argument('--resume', default=None, type=str, help='name of the latest checkpoint (default: None)')
 parser.add_argument('--load-state-dict-path', default=None, type=str, help='path to .h5 file with a state-dict to load before training (default: None)')
-parser.add_argument('--cell-level-labels-path', default='../output/densenet121_pred.h5', type=str)
+parser.add_argument('--cell-level-labels-path', default='output/densenet121_pred.h5', type=str)
 parser.add_argument('--eval-at-start', action='store_true')
 parser.add_argument('--image-level-labels', action='store_true')
 parser.add_argument('--normalize', action='store_true')
@@ -102,7 +102,7 @@ def main():
 
     if args.load_state_dict_path is not None:
         if args.load_state_dict_path == 'use-img-level-densenet-ckpt':
-            model_dir = '../output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6'
+            model_dir = 'output/models/densenet121_1024_all_data__obvious_neg__gradaccum_20__start_lr_3e6'
             pretrained_ckpt_path = os.path.join(f'{model_dir}', f'fold{args.fold}', 'final.pth')
         else:
             pretrained_ckpt_path = args.load_state_dict_path
@@ -144,7 +144,7 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]
@@ -163,7 +163,7 @@ def main():
     labels_df = pd.read_hdf(args.cell_level_labels_path)
 
     # modifying minor class labels
-    cherrypicked_mitotic_spindle = pd.read_csv('../input/mitotic_cells_selection.csv')
+    cherrypicked_mitotic_spindle = pd.read_csv('input/mitotic_cells_selection.csv')
 
     cherrypicked_mitotic_spindle_img_cell = set(
         cherrypicked_mitotic_spindle[['ID', 'cell_i']].apply(tuple, axis=1).values)
@@ -173,7 +173,7 @@ def main():
     class_names = get_class_names()
     mitotic_spindle_class_i = class_names.index('Mitotic spindle')
 
-    cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('../input/mitotic_pos_nn_added.csv')
+    cherrypicked_mitotic_spindle_based_on_nn = pd.read_csv('input/mitotic_pos_nn_added.csv')
     cherrypicked_mitotic_spindle_img_cell.update(set(cherrypicked_mitotic_spindle_based_on_nn[['ID', 'cell_i']].apply(tuple, axis=1).values))
     mitotic_bool_idx = labels_df.index.isin(cherrypicked_mitotic_spindle_img_cell)
 
@@ -181,7 +181,7 @@ def main():
 
     dfs = []
     for fold in range(5):
-        dfs.append(pd.read_csv(f'../output/mitotic_pred_fold_{fold}.csv'))
+        dfs.append(pd.read_csv(f'output/mitotic_pred_fold_{fold}.csv'))
     pred_df = pd.concat(dfs)
     pred_df.set_index(['ID', 'cell_i'], inplace=True)
     positive_img_ids_cell = pred_df.index[pred_df['pred'] < 0.6].values

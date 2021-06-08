@@ -106,7 +106,7 @@ def main():
     # state_dict = model.state_dict()
     # torch.save({
     #     'state_dict': state_dict
-    # }, '../output/densenet121_bestfitting_converted_classes.h5')
+    # }, 'output/densenet121_bestfitting_converted_classes.h5')
     # sys.exit(0)
     # move network to gpu
     # model = DataParallel(model)
@@ -156,7 +156,7 @@ def main():
     # Data loading code
     train_transform = train_multi_augment2
 
-    with open('../input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
+    with open('input/imagelevel_folds_obvious_staining_5.pkl', 'rb') as f:
         folds = pickle.load(f)
     fold = args.fold
     trn_img_paths, val_img_paths = folds[fold]

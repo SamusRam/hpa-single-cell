@@ -23,8 +23,7 @@ PUBLIC_DATA_FLAG = args.public_data
 DETECTION_THRESHOLD = args.detection_threshold
 BATCH_SIZE = 8
 
-PATH_TO_MASKS_ROOT = '../input/hpa_cell_mask_public/' if PUBLIC_DATA_FLAG else '../input/hpa_cell_mask/'
-OUTPUT_PATH = '../input/negs_with_obvious_staining_public.pkl' if PUBLIC_DATA_FLAG else '../input/negs_with_obvious_staining.pkl'
+OUTPUT_PATH = 'input/negs_with_obvious_staining_public.pkl' if PUBLIC_DATA_FLAG else 'input/negs_with_obvious_staining.pkl'
 
 num_cores = multiprocessing.cpu_count()
 

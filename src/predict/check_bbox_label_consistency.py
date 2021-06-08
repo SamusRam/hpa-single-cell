@@ -3,9 +3,9 @@ import os
 from tqdm.auto import tqdm
 import pickle
 
-trn_cell_boxes_path='../input/cell_bboxes_train'
-public_cell_boxes_path='../input/cell_bboxes_public'
-labels_df = pd.read_hdf('../output/image_level_labels.h5')
+trn_cell_boxes_path='input/cell_bboxes_train'
+public_cell_boxes_path='input/cell_bboxes_public'
+labels_df = pd.read_hdf('output/image_level_labels.h5')
 problematic_img_base_paths = []
 for img_base_path in tqdm(set(labels_df.index.get_level_values(0))):
     is_from_train = 'train' in img_base_path
@@ -22,7 +22,7 @@ for img_base_path in tqdm(set(labels_df.index.get_level_values(0))):
         problematic_img_base_paths.append(img_base_path)
         print(len(problematic_img_base_paths))
 
-with open('../output/bbox_pred_inconsistent_basepaths.pkl', 'wb') as f:
+with open('output/bbox_pred_inconsistent_basepaths.pkl', 'wb') as f:
     pickle.dump(problematic_img_base_paths, f)
 
 """REPAIR AFTER CASTING NEW PREDICTIONS STORED INTO image_level_labels_repaired.h5
