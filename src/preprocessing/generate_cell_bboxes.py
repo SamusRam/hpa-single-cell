@@ -67,14 +67,15 @@ def get_masks(imgs):
               [img[:, :, 3] for img in imgs],
               [img[:, :, 2] for img in imgs]]
 
-    nuc_segmentations, median_nuc_sizes = segmentator.pred_nuclei(images[2])
-    cell_segmentations, init_sizes = segmentator.pred_cells(images, median_nuc_sizes=median_nuc_sizes)
+    nuc_segmentations, target_shapes, median_nuc_sizes, nuc_counts = segmentator.pred_nuclei(images[2])
+    cell_segmentations, target_shapes = segmentator.pred_cells(images)
     cell_masks = []
     for i in range(len(cell_segmentations)):
         cell_mask = label_cell(nuc_segmentations[i],
                                cell_segmentations[i],
+                               target_shapes[i][0],
                                median_nuc_sizes[i],
-                               return_nuclei_label=False)
+                               nuc_counts[i], return_nuclei_label=False)
         cell_masks.append(cell_mask)
 
     return cell_masks
