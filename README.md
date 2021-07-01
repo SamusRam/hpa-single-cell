@@ -86,6 +86,9 @@ Estimating P_{neg} this way instead of trying to predict the negative label boos
     *Due to limited disk space, I downscaled the public data to 1024x1024*
  3. Please, download the previous-HPA-competition model by [bestfitting](https://www.kaggle.com/bestfitting) from [here](https://kth.app.box.com/s/gw43cvngx6quknq8ana9um1xx3ajhi4a) and extract the models into a folder `input/pretrained_models/models`.
 
+#### Installing HCE Cell Segmentation
+Please, install tools for running cell segmentation using pretrained U-Nets from [this branch](https://github.com/SamusRam/HPA-Cell-Segmentation/tree/closer_to_orig).
+
 #### Data preparation
  1. Detection of negative patterns with strong staining.
    
