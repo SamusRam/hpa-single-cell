@@ -568,3 +568,47 @@ class MitoticBalancingSubSampler(Sampler[int]):
     def __len__(self):
         self.prepare_balanced_subset()
         return self.num_samples
+
+
+class BalancingSubSampler(Sampler[int]):
+
+    def __init__(self, trn_img_paths, basepath_2_ohe_vector, class_names, required_class_count=1500) -> None:
+        self.trn_ohes = np.array([basepath_2_ohe_vector[path] for path in trn_img_paths])
+        self.class_name_2_i = {name: i for i, name in enumerate(class_names)}
+        self.class_name_2_count = [(name, count) for name, count in zip(class_names,
+                                                                        self.trn_ohes.sum(axis=0))]
+        self.class_name_2_indices = {class_name: np.where(self.trn_ohes[:, class_i] == 1)[0]
+                                     for class_i, class_name in enumerate(class_names)}
+        self.required_class_count = required_class_count
+        self.selected_indices = None
+
+    def prepare_balanced_subset(self):
+        shuffle(self.class_name_2_count)
+        self.selected_indices = []
+        selected_indices_set = set()
+        for class_name, class_count in self.class_name_2_count:
+            # check already added
+            present_count = self.trn_ohes[self.selected_indices, self.class_name_2_i[class_name]].sum()
+            needed_additionally_count = max(0, self.required_class_count - present_count)
+
+            remaining_class_indices = [idx for idx in self.class_name_2_indices[class_name]
+                                       if idx not in selected_indices_set]
+            if len(remaining_class_indices) > needed_additionally_count:
+                class_indices_added = sample(remaining_class_indices, needed_additionally_count)
+            else:
+                class_indices_added = remaining_class_indices
+
+            self.selected_indices.extend(class_indices_added)
+            selected_indices_set.update(class_indices_added)
+
+    @property
+    def num_samples(self) -> int:
+        return len(self.selected_indices)
+
+    def __iter__(self):
+        iterator = iter(self.selected_indices)
+        return iterator
+
+    def __len__(self):
+        self.prepare_balanced_subset()
+        return self.num_samples
