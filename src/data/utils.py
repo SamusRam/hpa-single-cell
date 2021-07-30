@@ -433,7 +433,7 @@ def get_new_class_name_indices_in_prev_comp_data():
     for new_class_index, class_name_new in enumerate(class_names):
         if class_name_new in old_comp_class_names:
             new_name_index_2_old_name_index[new_class_index] = old_comp_class_names.index(class_name_new)
-    return list(new_name_index_2_old_name_index.keys())
+    return list(new_name_index_2_old_name_index.values())
 
 
 def get_cell_img_with_mask(img_id, cell_i, is_public_data, return_mask=True, target_img_size=1024):
