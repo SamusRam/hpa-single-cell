@@ -72,7 +72,7 @@ class DensenetClass(nn.Module):
         if pretrained_file is not None:
             final_pretrained = torch.load(pretrained_file)
             prev_class_name_indices = get_new_class_name_indices_in_prev_comp_data()
-            prev_class_name_indices += [27, 27]
+            prev_class_name_indices += [26, 27]
             state_dict = final_pretrained['state_dict']
             state_dict['logit.weight'] = state_dict['logit.weight'][prev_class_name_indices, :]
             state_dict['logit.bias'] = state_dict['logit.bias'][prev_class_name_indices]
